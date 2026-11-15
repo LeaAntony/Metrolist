@@ -169,6 +169,28 @@ class DefaultStreamResolverTest {
         }
 
     @Test
+    fun onlineStreamSetsPlaybackTrackingFallbackAndFreshWebRemixTrackingFlags() =
+        runBlocking {
+            val resolver =
+                DefaultStreamResolver(
+                    FakeStreamExtractor(),
+                    InnerTube(HttpClient(MockEngine { respondOk() })),
+                    networkStateFlow = null,
+                )
+            try {
+                val online = resolver.resolve("dQw4w9WgXcQ")
+                assertTrue(online.allowPlaybackTrackingFallback)
+                assertTrue(online.preferFreshWebRemixTracking)
+
+                val local = resolver.resolve("local_track_1")
+                assertEquals(false, local.allowPlaybackTrackingFallback)
+                assertEquals(false, local.preferFreshWebRemixTracking)
+            } finally {
+                resolver.close()
+            }
+        }
+
+    @Test
     @OptIn(ExperimentalCoroutinesApi::class)
     fun pendingDirectResolutionSurvivesAnUnusableSabrFallback() =
         runTest {

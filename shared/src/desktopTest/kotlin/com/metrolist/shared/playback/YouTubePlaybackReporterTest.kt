@@ -1061,6 +1061,85 @@ class YouTubePlaybackReporterTest {
             }
         }
 
+    @Test
+    fun freshWebRemixTrackingDispatchesAtrPingAfterElapsedMediaTimeSeconds() =
+        runTest(testDispatcher) {
+            PendingYouTubePlaybackReportStore.clear()
+            var nowMs = 0L
+            val recorded = mutableListOf<Url>()
+            val client =
+                HttpClient(
+                    mockEngine { request ->
+                        synchronized(recorded) { recorded += request.url }
+                        if (request.url.encodedPath.contains("/player")) {
+                            respond(
+                                """
+                                {
+                                  "playabilityStatus": { "status": "OK" },
+                                  "playbackTracking": {
+                                    "videostatsPlaybackUrl": { "baseUrl": "https://music.youtube.com/api/stats/playback" },
+                                    "atrUrl": {
+                                      "baseUrl": "https://s.youtube.com/api/stats/atr?atr_params=token",
+                                      "elapsedMediaTimeSeconds": 5
+                                    },
+                                    "videostatsWatchtimeUrl": { "baseUrl": "https://music.youtube.com/api/stats/watchtime" }
+                                  }
+                                }
+                                """.trimIndent(),
+                                headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                            )
+                        } else {
+                            respond("", HttpStatusCode.NoContent)
+                        }
+                    },
+                ) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
+            val scope = CoroutineScope(coroutineContext + SupervisorJob())
+            val results = Channel<PlaybackReporterPingResult>(Channel.UNLIMITED)
+            try {
+                val innerTube =
+                    InnerTube(client).apply {
+                        replaceSession("SAPISID=session-atr", "visitor-atr", "account-atr", "0", true)
+                    }
+                val reporter =
+                    YouTubePlaybackReporter(
+                        scope = scope,
+                        repository = YouTubeRepository(innerTube),
+                        monotonicTimeMs = { nowMs },
+                        onPingResult = { results.trySend(it) },
+                    )
+                val resource =
+                    trackedResource("atr-cpn").copy(
+                        preferFreshWebRemixTracking = true,
+                    )
+
+                reporter.onPlaybackSample(1L, resource, 0L, true, true, 1f)
+                nowMs = 2_000L
+                reporter.onPlaybackSample(1L, resource, 2_000L, true, true, 1f)
+                val startResult = withTimeout(5_000) { results.receive() }
+                assertTrue(startResult is PlaybackReporterPingResult.Start && startResult.success)
+                assertEquals(1, recorded.count { it.encodedPath == "/youtubei/v1/player" })
+                assertEquals(listOf("/api/stats/playback"), recorded.map { it.encodedPath }.filter { it.startsWith("/api/stats/") })
+
+                nowMs = 5_000L
+                reporter.onPlaybackSample(1L, resource, 5_000L, true, true, 1f)
+                val atrResult = withTimeout(5_000) { results.receive() }
+                assertTrue(atrResult is PlaybackReporterPingResult.Atr && atrResult.success)
+
+                nowMs = 6_000L
+                reporter.onPlaybackSample(1L, resource, 6_000L, true, true, 1f)
+                reporter.onPlaybackStopped(1L, 6_000L)
+                withTimeout(5_000) { reporter.awaitPendingPings() }
+
+                val statsPaths = recorded.map { it.encodedPath }.filter { it.startsWith("/api/stats/") }
+                assertEquals(listOf("/api/stats/playback", "/api/stats/atr", "/api/stats/watchtime"), statsPaths)
+                assertTrue(recorded.filter { it.encodedPath.startsWith("/api/stats/") }.all { it.parameters["cpn"] == "atr-cpn" })
+            } finally {
+                scope.coroutineContext[Job]!!.cancelAndJoin()
+                client.close()
+                PendingYouTubePlaybackReportStore.clear()
+            }
+        }
+
     private fun trackedResource(cpn: String) =
         PlaybackResource(
             videoId = cpn,

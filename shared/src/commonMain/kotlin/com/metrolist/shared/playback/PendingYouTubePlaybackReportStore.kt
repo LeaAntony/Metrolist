@@ -35,6 +35,11 @@ internal sealed interface PendingYouTubePlaybackPing {
     ) : PendingYouTubePlaybackPing
 
     @Serializable
+    data class Atr(
+        override val offsetMs: Long,
+    ) : PendingYouTubePlaybackPing
+
+    @Serializable
     data class Watchtime(
         override val offsetMs: Long,
         val startSeconds: String,

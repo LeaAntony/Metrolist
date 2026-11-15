@@ -524,6 +524,8 @@ private class BenchmarkPlaybackStatsRecorder {
                 if (result.success) successfulStarts++
             }
 
+            is PlaybackReporterPingResult.Atr -> {}
+
             is PlaybackReporterPingResult.Watchtime -> {
                 result.segments.forEach { (startMs, endMs) ->
                     if (startMs < previousEndMs || endMs < startMs) nonOverlapping = false

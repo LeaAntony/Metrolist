@@ -4,6 +4,7 @@ import androidx.compose.runtime.snapshotFlow
 import com.metrolist.innertubex.extraction.PlaybackTrackingData
 import com.metrolist.innertubex.extraction.generateClientPlaybackNonce
 import com.metrolist.innertubex.models.YouTubeClient
+import com.metrolist.shared.api.ResolvedPlaybackTracking
 import com.metrolist.shared.api.YouTubeRepository
 import com.metrolist.shared.api.YouTubeRepository.PlaybackTrackingSession
 import com.metrolist.shared.settings.Settings
@@ -43,11 +44,16 @@ class YouTubePlaybackReporter internal constructor(
             val currentMediaTimeMs: Long,
         ) : Ping
 
+        data class Atr(
+            val offsetMs: Long,
+        ) : Ping
+
         data class Watchtime(
             val segments: WatchTimeSegments.Drained,
             val currentMediaTimeMs: Long,
             val realTimeMs: Long,
             val final: Boolean,
+            val watchedMs: Long = 0L,
         ) : Ping
     }
 
@@ -58,6 +64,7 @@ class YouTubePlaybackReporter internal constructor(
         val clientName: String,
         val clientPlaybackNonce: String,
         val initialTracking: PlaybackTrackingData?,
+        val preferFreshWebRemixTracking: Boolean,
         var format: Int?,
     ) {
         val pendingGeneration = PendingYouTubePlaybackReportStore.generation
@@ -67,6 +74,10 @@ class YouTubePlaybackReporter internal constructor(
         val segments = WatchTimeSegments()
         val pings = Channel<Ping>(Channel.UNLIMITED)
         var schedule = initialTracking?.toSchedule() ?: WatchTimeSchedule(null, null)
+        var hasAtrUrl = false
+        var atrAfterMs = ResolvedPlaybackTracking.DEFAULT_ATR_SECONDS * 1_000L
+        var atrEnqueued = false
+        var watchedMs = 0L
         var deferred = false
         var lastAcknowledgedOffsetMs = 0L
         var lastCheckpointMs = 0L
@@ -138,6 +149,7 @@ class YouTubePlaybackReporter internal constructor(
                         clientName = resource.clientName,
                         clientPlaybackNonce = tracking?.clientPlaybackNonce ?: generateClientPlaybackNonce(),
                         initialTracking = tracking,
+                        preferFreshWebRemixTracking = resource.preferFreshWebRemixTracking,
                         format = resource.itag,
                     )
                 newSession.accumulating = true
@@ -168,11 +180,16 @@ class YouTubePlaybackReporter internal constructor(
                 active.segments.onSeek(active.segments.lastKnownPositionMs(), positionMs, continuePlaying = true)
                 enqueueWatchtimeLocked(active, positionMs, final = false)
             } else {
+                val previousPositionMs = active.lastRenderingPositionMs
+                if (previousPositionMs != null && positionMs > previousPositionMs) {
+                    active.watchedMs += (positionMs - previousPositionMs)
+                }
                 active.segments.onProgress(positionMs)
             }
             active.wasRendering = true
             active.lastRenderingPositionMs = positionMs
             active.lastRenderingSampleAtMs = monotonicTimeMs()
+            maybeEnqueueAtrLocked(active)
             flushScheduledWatchtime(active, positionMs)
         }
     }
@@ -275,13 +292,34 @@ class YouTubePlaybackReporter internal constructor(
         positionMs: Long,
     ) {
         if (active.accumulating) {
+            accumulateProgressBeforeStopLocked(active, positionMs)
             active.segments.onPause(positionMs)
             active.accumulating = false
+            maybeEnqueueAtrLocked(active)
             enqueueWatchtimeLocked(active, positionMs, final = false)
         }
         active.wasRendering = false
         active.lastRenderingPositionMs = null
         active.lastRenderingSampleAtMs = null
+    }
+
+    private fun accumulateProgressBeforeStopLocked(
+        active: Session,
+        positionMs: Long,
+    ) {
+        val previousPositionMs = active.lastRenderingPositionMs ?: return
+        if (positionMs <= previousPositionMs) return
+        val elapsedMs = active.lastRenderingSampleAtMs?.let { (monotonicTimeMs() - it).coerceAtLeast(0L) }
+        val deltaMs = positionMs - previousPositionMs
+        if (elapsedMs == null || deltaMs <= elapsedMs + POSITION_DISCONTINUITY_TOLERANCE_MS) {
+            active.watchedMs += deltaMs
+        }
+    }
+
+    private fun maybeEnqueueAtrLocked(active: Session) {
+        if (!active.hasAtrUrl || active.atrEnqueued || active.watchedMs < active.atrAfterMs) return
+        active.atrEnqueued = true
+        active.pings.trySend(Ping.Atr(offsetMs = active.realTimeMs()))
     }
 
     private fun hasPositionDiscontinuity(
@@ -315,6 +353,7 @@ class YouTubePlaybackReporter internal constructor(
                 currentMediaTimeMs = currentMediaTimeMs.coerceAtLeast(0L),
                 realTimeMs = active.realTimeMs(),
                 final = final,
+                watchedMs = active.watchedMs,
             ),
         )
     }
@@ -328,8 +367,12 @@ class YouTubePlaybackReporter internal constructor(
         if (session === active) session = null
         val lastKnownPositionMs = active.segments.lastKnownPositionMs()
         val end = endPositionMs?.takeIf { it >= 0L }?.coerceAtLeast(lastKnownPositionMs) ?: lastKnownPositionMs
+        if (active.accumulating) {
+            accumulateProgressBeforeStopLocked(active, end)
+        }
         active.segments.onPause(end)
         active.accumulating = false
+        maybeEnqueueAtrLocked(active)
         val drained = active.segments.drain(end, continuePlaying = false)
         active.pings.trySend(
             Ping.Watchtime(
@@ -343,6 +386,7 @@ class YouTubePlaybackReporter internal constructor(
                 currentMediaTimeMs = end,
                 realTimeMs = active.realTimeMs(),
                 final = true,
+                watchedMs = active.watchedMs,
             ),
         )
         active.pings.close()
@@ -379,15 +423,20 @@ class YouTubePlaybackReporter internal constructor(
 
     private suspend fun consume(active: Session) {
         try {
-            val initial = active.initialTracking?.takeIf { active.clientName == YouTubeClient.WEB_REMIX.clientName && isFresh(it) }
-            val tracking =
+            val initial =
+                active.initialTracking?.takeIf {
+                    !active.preferFreshWebRemixTracking &&
+                        active.clientName == YouTubeClient.WEB_REMIX.clientName &&
+                        isFresh(it)
+                }
+            val resolvedTracking =
                 if (!isReportingEnabled(active)) {
                     Logger.i(REPORTING_TAG, "suppressed phase=tracking generation=${active.reportingGeneration}")
                     null
                 } else {
-                    initial
+                    initial?.let { ResolvedPlaybackTracking(data = it, atrUrl = null) }
                         ?: try {
-                            repository.getPlaybackTracking(
+                            repository.getResolvedPlaybackTracking(
                                 videoId = active.videoId,
                                 clientPlaybackNonce = active.clientPlaybackNonce,
                                 playbackSession = active.playbackSession,
@@ -398,13 +447,20 @@ class YouTubePlaybackReporter internal constructor(
                             null
                         }
                 }
-            if (tracking != null) {
+            val tracking = resolvedTracking?.data
+            if (resolvedTracking != null) {
                 lock.withLock {
-                    if (!active.finished) active.schedule = tracking.toSchedule()
+                    if (!active.finished) {
+                        active.schedule = resolvedTracking.data.toSchedule()
+                        active.hasAtrUrl = resolvedTracking.atrUrl != null
+                        active.atrAfterMs = resolvedTracking.atrAfterSeconds * 1_000L
+                        maybeEnqueueAtrLocked(active)
+                    }
                 }
             }
 
             var opened = false
+            var atrSent = false
             lock.withLock { active.deferred = tracking?.playbackUrl == null }
             for (ping in active.pings) {
                 if (!isReportingEnabled(active)) {
@@ -414,10 +470,41 @@ class YouTubePlaybackReporter internal constructor(
                     onPingResult(ping.result(active.clientPlaybackNonce, success = false))
                     continue
                 }
+                if (ping is Ping.Atr && !lock.withLock { active.deferred } && resolvedTracking?.atrUrl == null) {
+                    continue
+                }
                 if (lock.withLock { active.deferred }) {
                     persist(active, ping)
                     onPingResult(ping.result(active.clientPlaybackNonce, success = false))
                     continue
+                }
+                if (ping is Ping.Watchtime &&
+                    !atrSent &&
+                    opened &&
+                    resolvedTracking?.atrUrl != null &&
+                    ping.watchedMs >= resolvedTracking.atrAfterSeconds * 1_000L
+                ) {
+                    val atrSuccess =
+                        dispatchAtr(
+                            atrUrl = resolvedTracking.atrUrl,
+                            clientPlaybackNonce = active.clientPlaybackNonce,
+                            playbackSession = active.playbackSession,
+                        )
+                    Logger.i(
+                        REPORTING_TAG,
+                        "atr outcome=${if (atrSuccess) "success" else "failure"} generation=${active.reportingGeneration}",
+                    )
+                    onPingResult(PlaybackReporterPingResult.Atr(active.clientPlaybackNonce, atrSuccess))
+                    if (atrSuccess) {
+                        atrSent = true
+                        active.lastAcknowledgedOffsetMs = ping.realTimeMs
+                    } else {
+                        lock.withLock { active.deferred = true }
+                        persist(active, Ping.Atr(offsetMs = ping.realTimeMs))
+                        persist(active, ping)
+                        onPingResult(ping.result(active.clientPlaybackNonce, success = false))
+                        continue
+                    }
                 }
                 val success =
                     try {
@@ -431,6 +518,22 @@ class YouTubePlaybackReporter internal constructor(
                                         format = lock.withLock { active.format },
                                         playbackSession = active.playbackSession,
                                     ).also { opened = it }
+                            }
+
+                            is Ping.Atr -> {
+                                val atrUrl = resolvedTracking?.atrUrl ?: continue
+                                (
+                                    atrSent ||
+                                        (
+                                            opened &&
+                                                repository
+                                                    .registerAtr(
+                                                        atrTrackingUrl = atrUrl,
+                                                        clientPlaybackNonce = active.clientPlaybackNonce,
+                                                        playbackSession = active.playbackSession,
+                                                    ).also { if (it) atrSent = true }
+                                        )
+                                )
                             }
 
                             is Ping.Watchtime -> {
@@ -473,6 +576,23 @@ class YouTubePlaybackReporter internal constructor(
         }
     }
 
+    private suspend fun dispatchAtr(
+        atrUrl: String,
+        clientPlaybackNonce: String,
+        playbackSession: PlaybackTrackingSession,
+    ): Boolean =
+        try {
+            repository.registerAtr(
+                atrTrackingUrl = atrUrl,
+                clientPlaybackNonce = clientPlaybackNonce,
+                playbackSession = playbackSession,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+
     private fun isReportingEnabled(active: Session): Boolean =
         lock.withLock { reportingEnabled && active.reportingGeneration == reportingGeneration } &&
             repository.isPlaybackReportingEnabled() &&
@@ -500,6 +620,10 @@ class YouTubePlaybackReporter internal constructor(
         when (this) {
             is Ping.Start -> {
                 PendingYouTubePlaybackPing.Start(0L, currentMediaTimeMs)
+            }
+
+            is Ping.Atr -> {
+                PendingYouTubePlaybackPing.Atr(offsetMs)
             }
 
             is Ping.Watchtime -> {
@@ -592,7 +716,7 @@ class YouTubePlaybackReporter internal constructor(
             if (!isReplayCurrent(accountKey, playbackSession)) return null
             val tracking =
                 try {
-                    repository.getPlaybackTracking(
+                    repository.getResolvedPlaybackTracking(
                         videoId = report.videoId,
                         clientPlaybackNonce = report.clientPlaybackNonce,
                         playbackSession = playbackSession,
@@ -603,11 +727,16 @@ class YouTubePlaybackReporter internal constructor(
                     null
                 }
             if (!isReplayCurrent(accountKey, playbackSession)) return null
-            if (tracking?.playbackUrl == null) {
+            if (tracking?.data?.playbackUrl == null) {
                 PendingYouTubePlaybackReportStore.markRetry(report.id, epochTimeMs())
                 break
             }
             var opened = report.pings.none { it is PendingYouTubePlaybackPing.Start }
+            var atrPendingOrUnneeded =
+                report.pings.any { it is PendingYouTubePlaybackPing.Atr } ||
+                    report.pings.none { it is PendingYouTubePlaybackPing.Start } ||
+                    tracking.atrUrl == null
+            var replayedWatchedMs = 0L
             var previousOffset = report.lastAcknowledgedOffsetMs
             for (ping in report.pings) {
                 val waitMs = (ping.offsetMs - previousOffset).coerceAtLeast(0L)
@@ -616,6 +745,28 @@ class YouTubePlaybackReporter internal constructor(
                 if (!isReplayCurrent(accountKey, playbackSession)) return null
                 val stillQueued = PendingYouTubePlaybackReportStore.all().any { it.id == report.id && ping in it.pings }
                 if (!stillQueued) break
+                if (ping is PendingYouTubePlaybackPing.Watchtime) {
+                    replayedWatchedMs += ping.segments.sumOf { (start, end) -> (end - start).coerceAtLeast(0L) }
+                    if (!atrPendingOrUnneeded &&
+                        opened &&
+                        replayedWatchedMs >= tracking.atrAfterSeconds * 1_000L
+                    ) {
+                        val atrUrl = tracking.atrUrl
+                        val atrSuccess =
+                            if (atrUrl != null) {
+                                dispatchAtr(atrUrl, tracking.data.clientPlaybackNonce, playbackSession)
+                            } else {
+                                true
+                            }
+                        if (!isReplayCurrent(accountKey, playbackSession)) return null
+                        if (!atrSuccess) {
+                            PendingYouTubePlaybackReportStore.markRetry(report.id, epochTimeMs())
+                            break
+                        }
+                        atrPendingOrUnneeded = true
+                        Logger.i(REPORTING_TAG, "replay outcome=success phase=atr")
+                    }
+                }
                 val success =
                     try {
                         submitPendingPing(report, ping, tracking, opened, playbackSession)
@@ -637,7 +788,7 @@ class YouTubePlaybackReporter internal constructor(
                 )
                 Logger.i(
                     REPORTING_TAG,
-                    "replay outcome=success phase=${if (ping is PendingYouTubePlaybackPing.Start) "start" else "watchtime"}",
+                    "replay outcome=success phase=${ping.logPhase()}",
                 )
             }
         }
@@ -659,27 +810,37 @@ class YouTubePlaybackReporter internal constructor(
     private suspend fun submitPendingPing(
         report: PendingYouTubePlaybackReport,
         ping: PendingYouTubePlaybackPing,
-        tracking: PlaybackTrackingData,
+        tracking: ResolvedPlaybackTracking,
         opened: Boolean,
         playbackSession: PlaybackTrackingSession,
     ): Boolean =
         when (ping) {
             is PendingYouTubePlaybackPing.Start -> {
                 repository.registerPlayback(
-                    playbackTrackingUrl = tracking.playbackUrl ?: return false,
-                    clientPlaybackNonce = tracking.clientPlaybackNonce,
+                    playbackTrackingUrl = tracking.data.playbackUrl ?: return false,
+                    clientPlaybackNonce = tracking.data.clientPlaybackNonce,
                     currentMediaTime = WatchTimeSegments.formatSeconds(ping.currentMediaTimeMs),
                     format = report.format,
                     playbackSession = playbackSession,
                 )
             }
 
+            is PendingYouTubePlaybackPing.Atr -> {
+                val atrUrl = tracking.atrUrl ?: return true
+                opened &&
+                    repository.registerAtr(
+                        atrTrackingUrl = atrUrl,
+                        clientPlaybackNonce = tracking.data.clientPlaybackNonce,
+                        playbackSession = playbackSession,
+                    )
+            }
+
             is PendingYouTubePlaybackPing.Watchtime -> {
-                val watchtimeUrl = tracking.watchtimeUrl
+                val watchtimeUrl = tracking.data.watchtimeUrl
                 opened && watchtimeUrl != null &&
                     repository.registerWatchtime(
                         watchtimeTrackingUrl = watchtimeUrl,
-                        clientPlaybackNonce = tracking.clientPlaybackNonce,
+                        clientPlaybackNonce = tracking.data.clientPlaybackNonce,
                         startTimes = ping.startSeconds,
                         endTimes = ping.endSeconds,
                         currentMediaTime = WatchTimeSegments.formatSeconds(ping.currentMediaTimeMs),
@@ -719,6 +880,11 @@ internal sealed interface PlaybackReporterPingResult {
         override val success: Boolean,
     ) : PlaybackReporterPingResult
 
+    data class Atr(
+        override val clientPlaybackNonce: String,
+        override val success: Boolean,
+    ) : PlaybackReporterPingResult
+
     data class Watchtime(
         override val clientPlaybackNonce: String,
         override val success: Boolean,
@@ -730,7 +896,15 @@ internal sealed interface PlaybackReporterPingResult {
 private fun YouTubePlaybackReporter.Ping.logType(): String =
     when (this) {
         is YouTubePlaybackReporter.Ping.Start -> "start"
+        is YouTubePlaybackReporter.Ping.Atr -> "atr"
         is YouTubePlaybackReporter.Ping.Watchtime -> "watchtime"
+    }
+
+private fun PendingYouTubePlaybackPing.logPhase(): String =
+    when (this) {
+        is PendingYouTubePlaybackPing.Start -> "start"
+        is PendingYouTubePlaybackPing.Atr -> "atr"
+        is PendingYouTubePlaybackPing.Watchtime -> "watchtime"
     }
 
 private fun YouTubePlaybackReporter.Ping.result(
@@ -740,6 +914,10 @@ private fun YouTubePlaybackReporter.Ping.result(
     when (this) {
         is YouTubePlaybackReporter.Ping.Start -> {
             PlaybackReporterPingResult.Start(clientPlaybackNonce, success)
+        }
+
+        is YouTubePlaybackReporter.Ping.Atr -> {
+            PlaybackReporterPingResult.Atr(clientPlaybackNonce, success)
         }
 
         is YouTubePlaybackReporter.Ping.Watchtime -> {
