@@ -52,6 +52,8 @@ import com.metrolist.shared.api.artwork.YouTubeCanvasClip
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.entities.KIND_DOWNLOAD
+import com.metrolist.shared.deviceconnect.DeviceConnectUiSummary
+import com.metrolist.shared.deviceconnect.rememberDeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cast_permission_required
 import com.metrolist.shared.generated.resources.queued_songs
@@ -104,7 +106,15 @@ class AndroidPlayerPlatform(
     override fun isDeviceConnectActive(): Boolean {
         val state by AndroidDeviceConnect.manager.remote.state
             .collectAsState()
-        return state.sessionId != null
+        return state.sessionId != null || state.transferringToId != null
+    }
+
+    @Composable
+    override fun deviceConnectSummary(): DeviceConnectUiSummary {
+        val managerState by AndroidDeviceConnect.manager.state.collectAsState()
+        val syncState by AndroidDeviceConnect.manager.remote.state
+            .collectAsState()
+        return rememberDeviceConnectUiSummary(managerState, syncState)
     }
 
     @Composable

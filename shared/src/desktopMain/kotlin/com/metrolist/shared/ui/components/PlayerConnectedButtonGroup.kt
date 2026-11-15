@@ -122,6 +122,7 @@ actual fun PlayerConnectedButtonGroup(
     isCasting: Boolean,
     onDeviceConnectClick: (() -> Unit)?,
     isDeviceConnectActive: Boolean,
+    prioritizeDeviceConnect: Boolean,
     touchTarget: Dp,
     sectioned: Boolean,
 ) {
@@ -176,16 +177,18 @@ actual fun PlayerConnectedButtonGroup(
                 )
             },
         )
+    val deviceConnectAction =
+        onDeviceConnectClick?.let {
+            PlayerControlAction(
+                if (isDeviceConnectActive) MetrolistIcons.Filled.Devices else MetrolistIcons.Outlined.Devices,
+                stringResource(Res.string.device_connect_title),
+                it,
+                isDeviceConnectActive,
+            )
+        }
     val rightActions =
         listOfNotNull(
-            onDeviceConnectClick?.let {
-                PlayerControlAction(
-                    MetrolistIcons.Outlined.Devices,
-                    stringResource(Res.string.device_connect_title),
-                    it,
-                    isDeviceConnectActive,
-                )
-            },
+            deviceConnectAction,
             onCastClick
                 ?.takeIf {
                     Settings.shared.isPlayerCastButtonVisible
@@ -274,7 +277,7 @@ actual fun PlayerConnectedButtonGroup(
             } else {
                 listOf(leftActions + volumeAction + rightActions)
             }
-        groups.forEachIndexed { groupIndex, actions ->
+        groups.forEachIndexed { groupIndex, rawActions ->
             if (groupIndex > 0) Spacer(Modifier.weight(1f))
             var measuredWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
             var overflowWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
@@ -288,8 +291,21 @@ actual fun PlayerConnectedButtonGroup(
                     with(density) { 40.dp.coerceAtLeast(minimumTouchTarget).toPx() }
                 }
             val lastVisibleIndex =
-                remember(measuredWidth, actions.size, itemWidthPx, spacingPx, overflowWidthPx) {
-                    playerControlLastVisibleIndex(measuredWidth.toFloat(), actions.size, itemWidthPx, spacingPx, overflowWidthPx)
+                remember(measuredWidth, rawActions.size, itemWidthPx, spacingPx, overflowWidthPx) {
+                    playerControlLastVisibleIndex(measuredWidth.toFloat(), rawActions.size, itemWidthPx, spacingPx, overflowWidthPx)
+                }
+            val actions =
+                remember(rawActions, lastVisibleIndex, prioritizeDeviceConnect, sectioned, volumeAction, deviceConnectAction) {
+                    if (!prioritizeDeviceConnect || sectioned || deviceConnectAction == null) {
+                        rawActions
+                    } else {
+                        promoteAdjacentControlActions(
+                            actions = rawActions,
+                            lastVisibleIndex = lastVisibleIndex,
+                            primaryIndex = rawActions.indexOfFirst { it === volumeAction },
+                            secondaryIndex = rawActions.indexOfFirst { it === deviceConnectAction },
+                        )
+                    }
                 }
             ButtonGroup(
                 overflowIndicator = { menuState ->

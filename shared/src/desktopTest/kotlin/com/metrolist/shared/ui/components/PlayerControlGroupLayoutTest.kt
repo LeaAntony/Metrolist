@@ -21,5 +21,23 @@ class PlayerControlGroupLayoutTest {
         assertEquals(-1, playerControlLastVisibleIndex(48f, 0, 48f, 2f, 48f))
     }
 
+    @Test
+    fun connectedDeviceConnectStaysAdjacentToVolumeOutsideOverflowWhenTight() {
+        val actions = listOf("queue", "lyrics", "shuffle", "repeat", "volume", "device_connect", "miniplayer", "fullscreen")
+        val promoted =
+            promoteAdjacentControlActions(
+                actions = actions,
+                lastVisibleIndex = 4,
+                primaryIndex = actions.indexOf("volume"),
+                secondaryIndex = actions.indexOf("device_connect"),
+            )
+        assertEquals(
+            listOf("queue", "lyrics", "shuffle", "volume", "device_connect", "repeat", "miniplayer", "fullscreen"),
+            promoted,
+        )
+        assertEquals(actions, promoteAdjacentControlActions(actions, 5, 4, 5))
+        assertEquals(actions, promoteAdjacentControlActions(actions, 0, 4, 5))
+    }
+
     private fun lastVisible(width: Float): Int = playerControlLastVisibleIndex(width, 4, 48f, 2f, 48f)
 }

@@ -153,11 +153,13 @@ import androidx.compose.ui.unit.dp
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.cast.CastState
 import com.metrolist.shared.constants.QueuePeekHeight
+import com.metrolist.shared.deviceconnect.DeviceConnectOutputPill
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.action_like
 import com.metrolist.shared.generated.resources.album_art
 import com.metrolist.shared.generated.resources.cast
 import com.metrolist.shared.generated.resources.collapse
+import com.metrolist.shared.generated.resources.device_connect_title
 import com.metrolist.shared.generated.resources.expand
 import com.metrolist.shared.generated.resources.lyrics
 import com.metrolist.shared.generated.resources.menu_seek_backward
@@ -559,6 +561,11 @@ fun PlayerScreen(
             (wantsPlayback && !castState.isConnected && (isPlaybackLoading || playbackResource == null))
     var showDeviceConnectSheet by remember { mutableStateOf(false) }
     val openCastDialog = platform.rememberCastDialogLauncher { showDeviceConnectSheet = true }
+    val isDeviceConnectActive = platform.isDeviceConnectActive()
+    val deviceConnectSummary = platform.deviceConnectSummary()
+    val openDeviceConnect: () -> Unit = {
+        if (Settings.shared.castEnabled) openCastDialog() else showDeviceConnectSheet = true
+    }
     val isVideoModeActive by playerConnection?.isVideoModeActive?.collectWhilePlayerActive(isPlayerContentVisible && isScreenVisible)
         ?: remember { mutableStateOf(false) }
     val isVideoModeResolving by playerConnection?.isVideoModeResolving?.collectWhilePlayerActive(isPlayerContentVisible && isScreenVisible)
@@ -1199,6 +1206,9 @@ fun PlayerScreen(
                                 onShowSleepTimer = { showSleepTimerDialog = true },
                                 onOpenCast = openCastDialog,
                                 isCasting = castState.isConnected,
+                                onOpenDeviceConnect = openDeviceConnect,
+                                isDeviceConnectActive = isDeviceConnectActive,
+                                deviceConnectSummary = deviceConnectSummary,
                             )
                         } else if (useLandscapeLayout) {
                             if (useTabletLayout || landscapeQueueVisible) {
@@ -1247,6 +1257,9 @@ fun PlayerScreen(
                                     isVideoModeResolving = isVideoModeResolving,
                                     usesFullscreenThumbnail = showFullscreenThumbnailBackground,
                                     usesCanvasThumbnail = usesCanvasThumbnail,
+                                    onOpenDeviceConnect = openDeviceConnect,
+                                    isDeviceConnectActive = isDeviceConnectActive,
+                                    deviceConnectSummary = deviceConnectSummary,
                                 )
                             } else {
                                 LandscapePlayerContent(
@@ -1293,6 +1306,9 @@ fun PlayerScreen(
                                     isVideoModeResolving = isVideoModeResolving,
                                     usesFullscreenThumbnail = showFullscreenThumbnailBackground,
                                     usesCanvasThumbnail = usesCanvasThumbnail,
+                                    onOpenDeviceConnect = openDeviceConnect,
+                                    isDeviceConnectActive = isDeviceConnectActive,
+                                    deviceConnectSummary = deviceConnectSummary,
                                 )
                             }
                         } else {
@@ -1625,25 +1641,29 @@ fun PlayerScreen(
                                                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                                                         verticalAlignment = Alignment.CenterVertically,
                                                     ) {
-                                                        if (!isTv && !isListenTogetherGuest && platform.supportsCasting &&
-                                                            Settings.shared.isPlayerCastButtonVisible
+                                                        if (!isTv && !isListenTogetherGuest && (
+                                                                (platform.supportsCasting && Settings.shared.isPlayerCastButtonVisible) ||
+                                                                    deviceConnectSummary.enabled ||
+                                                                    isDeviceConnectActive
+                                                            )
                                                         ) {
+                                                            val isOutputHighlighted = castState.isConnected || isDeviceConnectActive
                                                             FilledIconButton(
                                                                 onClick = {
                                                                     hapticManager.perform(HapticEvent.PRESS)
-                                                                    openCastDialog()
+                                                                    openDeviceConnect()
                                                                 },
                                                                 shapes = IconButtonDefaults.shapes(shape = CircleShape),
                                                                 colors =
                                                                     IconButtonDefaults.filledIconButtonColors(
                                                                         containerColor =
-                                                                            if (castState.isConnected) {
+                                                                            if (isOutputHighlighted) {
                                                                                 MaterialTheme.colorScheme.primary
                                                                             } else {
                                                                                 MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                                                                             },
                                                                         contentColor =
-                                                                            if (castState.isConnected) {
+                                                                            if (isOutputHighlighted) {
                                                                                 MaterialTheme.colorScheme.onPrimary
                                                                             } else {
                                                                                 textBackgroundColor
@@ -1653,12 +1673,20 @@ fun PlayerScreen(
                                                             ) {
                                                                 Icon(
                                                                     imageVector =
-                                                                        if (castState.isConnected) {
-                                                                            MetrolistIcons.Filled.Cast
-                                                                        } else {
-                                                                            MetrolistIcons.Outlined.Cast
+                                                                        when {
+                                                                            castState.isConnected -> MetrolistIcons.Filled.Cast
+                                                                            isDeviceConnectActive -> MetrolistIcons.Filled.Devices
+                                                                            Settings.shared.castEnabled -> MetrolistIcons.Outlined.Cast
+                                                                            else -> MetrolistIcons.Outlined.Devices
                                                                         },
-                                                                    contentDescription = stringResource(Res.string.cast),
+                                                                    contentDescription =
+                                                                        stringResource(
+                                                                            if (!Settings.shared.castEnabled || isDeviceConnectActive) {
+                                                                                Res.string.device_connect_title
+                                                                            } else {
+                                                                                Res.string.cast
+                                                                            },
+                                                                        ),
                                                                     modifier = Modifier.size(20.dp),
                                                                 )
                                                             }
@@ -2037,6 +2065,30 @@ fun PlayerScreen(
                                     }
                                 }
 
+                                playerControlsTransition.AnimatedVisibility(
+                                    visible = { (_, minimalUi) ->
+                                        !minimalUi &&
+                                            (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                                            deviceConnectSummary.activeDeviceName.isNotBlank()
+                                    },
+                                    enter = expandVertically() + fadeIn(),
+                                    exit = shrinkVertically() + fadeOut(),
+                                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                ) {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        DeviceConnectOutputPill(
+                                            deviceName = deviceConnectSummary.activeDeviceName,
+                                            deviceType = deviceConnectSummary.activeDeviceType,
+                                            isTransferring = deviceConnectSummary.isTransferring,
+                                            isRemote = deviceConnectSummary.isFollowing,
+                                            onClick = openDeviceConnect,
+                                        )
+                                    }
+                                }
+
                                 Spacer(modifier = Modifier.height(12.dp))
 
                                 PlayerProgressSlider(
@@ -2290,6 +2342,19 @@ fun PlayerScreen(
                                             isLyricsVisible = uiState.isLyricsVisible,
                                             onIsLyricsVisibleChange = { visible -> viewModel.setLyricsVisible(visible) },
                                             isVideoAvailable = uiState.isVideoAvailable,
+                                            onDeviceConnectClick =
+                                                if (
+                                                    !isListenTogetherGuest &&
+                                                    (deviceConnectSummary.enabled || platform.supportsCasting || isDeviceConnectActive)
+                                                ) {
+                                                    {
+                                                        hapticManager.perform(HapticEvent.PRESS)
+                                                        openDeviceConnect()
+                                                    }
+                                                } else {
+                                                    null
+                                                },
+                                            isDeviceConnectActive = isDeviceConnectActive || castState.isConnected,
                                             isListenTogetherGuest = isListenTogetherGuest,
                                         )
                                     }

@@ -24,6 +24,7 @@ import com.metrolist.shared.api.musicvideo.MusicVideoResolver
 import com.metrolist.shared.deviceconnect.DcLocalPlaybackState
 import com.metrolist.shared.model.SearchResultPage
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.playback.MusicQueueSnapshot
 import com.metrolist.shared.playback.PlaybackSeekSource
 import com.metrolist.shared.playback.ffmpeg.SabrInputStream
 import com.metrolist.shared.playback.playbackCrossfadeGains
@@ -1045,6 +1046,40 @@ class ExoPlaybackPlayerTest {
         assertEquals(1.25f, exo.playbackParameters.pitch, 0f)
         assertEquals(24_000L, player.getRealtimePositionMs())
         assertFalse(player.isPlaying.value)
+    }
+
+    @Test
+    fun enteringControllerModeFromLocalPlaybackNeverEmitsTransientNullSong() {
+        val song = song()
+        val queue = MusicQueueSnapshot(listOf(song), listOf(song), 0, originalIndices = listOf(0))
+        player.setQueue(listOf(song), preparePlayback = false)
+        assertEquals(song.id, player.currentSong.value?.id)
+
+        val observedSongIds = mutableListOf<String?>()
+        val collectorScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+        val job =
+            collectorScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                player.currentSong.collect { observedSongIds += it?.id }
+            }
+        try {
+            player.setControllerPlayback(
+                DcLocalPlaybackState(
+                    queue = queue,
+                    playing = true,
+                    ready = true,
+                    durationMs = 120_000L,
+                    positionMs = 12_000L,
+                ),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf(song.id), observedSongIds)
+            assertEquals(song.id, player.currentSong.value?.id)
+            assertTrue(player.isPlaying.value)
+            assertEquals(120_000L, player.duration.value)
+        } finally {
+            job.cancel()
+            collectorScope.cancel()
+        }
     }
 
     @Test

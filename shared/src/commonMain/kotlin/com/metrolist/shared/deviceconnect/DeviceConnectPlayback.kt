@@ -107,6 +107,7 @@ data class DcSyncState(
     val controllerIds: Set<String> = emptySet(),
     val playbackAvailable: Boolean = false,
     val error: DcSyncError? = null,
+    val transferringToId: String? = null,
 )
 
 interface DeviceConnectPlaybackPort {

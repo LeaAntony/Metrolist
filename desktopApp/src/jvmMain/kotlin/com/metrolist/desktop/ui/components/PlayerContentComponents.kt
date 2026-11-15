@@ -2,10 +2,13 @@
 
 package com.metrolist.desktop.ui.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -66,6 +69,8 @@ import com.metrolist.desktop.state.content.PlaylistAlbumState
 import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
+import com.metrolist.shared.deviceconnect.DeviceConnectOutputPill
+import com.metrolist.shared.deviceconnect.rememberDeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cd_playback_position
 import com.metrolist.shared.generated.resources.more
@@ -140,6 +145,10 @@ fun PlayerCoreContent(
 ) {
     val playerMenu = rememberCursorContextMenuState()
     val castState by PlayerState.castManager.state.collectAsState()
+    val deviceManagerState by DesktopDeviceConnect.manager.state.collectAsState()
+    val deviceSyncState by DesktopDeviceConnect.manager.remote.state
+        .collectAsState()
+    val deviceConnectSummary = rememberDeviceConnectUiSummary(deviceManagerState, deviceSyncState)
     val isListenTogetherGuest = ListenTogetherState.isListenTogetherGuest()
     var showCastDialog by remember { mutableStateOf(false) }
     var showDetailsDialog by remember { mutableStateOf(false) }
@@ -286,6 +295,23 @@ fun PlayerCoreContent(
                 }
             }
 
+            AnimatedVisibility(
+                visible =
+                    (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                        deviceConnectSummary.activeDeviceName.isNotBlank(),
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.padding(top = 8.dp * scale),
+            ) {
+                DeviceConnectOutputPill(
+                    deviceName = deviceConnectSummary.activeDeviceName,
+                    deviceType = deviceConnectSummary.activeDeviceType,
+                    isTransferring = deviceConnectSummary.isTransferring,
+                    isRemote = deviceConnectSummary.isFollowing,
+                    onClick = { showCastDialog = true },
+                )
+            }
+
             Spacer(Modifier.height(8.dp * scale))
 
             PlayerProgressSection()
@@ -394,6 +420,9 @@ fun PlayerCoreContent(
                     isSubtitleActive = PlayerState.isSubtitleActive,
                     onCastClick = if (!isListenTogetherGuest) ({ showCastDialog = true }) else null,
                     isCasting = castState.isConnected,
+                    onDeviceConnectClick = if (!isListenTogetherGuest) ({ showCastDialog = true }) else null,
+                    isDeviceConnectActive = showCastDialog || deviceConnectSummary.isActive,
+                    prioritizeDeviceConnect = deviceConnectSummary.hasConnectedPeer || deviceConnectSummary.isActive,
                     onFullscreenClick = toggleWindowFullscreen,
                     isFullscreen = PlayerState.isFullscreen || UiState.isNativeFullscreen,
                 )

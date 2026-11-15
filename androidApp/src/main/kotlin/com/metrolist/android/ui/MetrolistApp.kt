@@ -1288,7 +1288,8 @@ fun MetrolistApp(
                             }
 
                             else -> {
-                                if (hasMedia && !playerBottomSheetState.isExpanded &&
+                                if (hasMedia &&
+                                    (!playerBottomSheetState.isExpanded || playerBottomSheetState.targetAnchor == DISMISSED_ANCHOR) &&
                                     playerBottomSheetState.targetAnchor != EXPANDED_ANCHOR
                                 ) {
                                     playerBottomSheetState.collapseSoft()

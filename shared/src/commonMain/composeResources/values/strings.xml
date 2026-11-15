@@ -4836,6 +4836,25 @@
     <string name="device_connect_this_device_label">This device</string>
     <string name="device_connect_pair_hint">To pair a new device, open Integrations in Settings.</string>
     <string name="device_connect_unshareable_queue">This queue contains local files and cannot be shared.</string>
+    <string name="device_connect_current_output">Current output</string>
+    <string name="device_connect_switch_output">Switch playback to</string>
+    <!-- Translators: %1$s is the name of the device currently playing audio. -->
+    <string name="device_connect_playing_on">Playing on %1$s</string>
+    <!-- Translators: %1$s describes the type and model of the current device. -->
+    <string name="device_connect_active_output_summary">Playing audio here · %1$s</string>
+    <string name="device_connect_tap_to_switch">Tap to play on this device</string>
+    <string name="device_connect_switch_here">Play on this device</string>
+    <!-- Translators: %1$s is the name of a connected peer device. -->
+    <string name="device_connect_switch_to_peer">Play on %1$s</string>
+    <string name="device_connect_transferring">Switching playback…</string>
+    <!-- Translators: %1$s is the name of the device playback is switching to. -->
+    <string name="device_connect_transferring_to">Switching to %1$s…</string>
+    <string name="device_connect_open_settings">Manage &amp; pair devices</string>
+    <!-- Translators: Number of remote devices controlling playback on this device. -->
+    <plurals name="device_connect_controllers_count">
+        <item quantity="one">%1$d controller</item>
+        <item quantity="other">%1$d controllers</item>
+    </plurals>
     <!-- Translators: Heading for the Canvas animated artwork source order setting. -->
     <string name="canvas_content_order">Canvas content order</string>
     <!-- Translators: Supporting text for choosing the Canvas animated artwork source priority. -->

@@ -979,13 +979,16 @@ class ExoPlaybackPlayer(
             _playbackState.value = Player.STATE_IDLE
             return
         }
-        if (controllerClock == null) {
-            stop()
-            exo.clearMediaItems()
-        }
-        controllerClock = DeviceConnectControllerClock(playback)
-        displayVolumeState.value = playback.volume
         val song = playback.queue.displayedItems.getOrNull(playback.queue.currentIndex)
+        val nextClock = DeviceConnectControllerClock(playback)
+        if (controllerClock == null) {
+            // Preserve published song state across the local -> controller handover so observers never see a transient null song.
+            stopInternal(replacementClock = nextClock, preservePublishedSong = song != null)
+            exo.clearMediaItems()
+        } else {
+            controllerClock = nextClock
+        }
+        displayVolumeState.value = playback.volume
         currentSongValue = song
         _currentSong.value = song
         _currentPosition.value = playback.positionMs
@@ -1023,11 +1026,20 @@ class ExoPlaybackPlayer(
     }
 
     override fun stop() {
+        stopInternal(replacementClock = null, preservePublishedSong = false)
+    }
+
+    private fun stopInternal(
+        replacementClock: DeviceConnectControllerClock?,
+        preservePublishedSong: Boolean,
+    ) {
         onPlaybackCommand()
         cancelScreenOffFocusRecovery()
         outputRecoveryState = outputRecoveryState.cancelUserRecovery()
-        controllerClock = null
-        displayVolumeState.value = _volume.value
+        controllerClock = replacementClock
+        if (!preservePublishedSong) {
+            displayVolumeState.value = _volume.value
+        }
         requestCounter++
         playbackTransitions.clear()
         cancelNextInternal()
@@ -1050,21 +1062,23 @@ class ExoPlaybackPlayer(
         activeVideoSource = null
         currentResource = null
         updateOffloadPreferences(exo)
-        currentSongValue = null
         queueTrackChangePending = false
         currentInstance = 0L
         liveSessionStartElapsedRealtimeMs = 0L
         liveSessionAccumulatedMs = 0L
         recoveryReportingFloor = null
         eofInstance = 0L
-        _currentSong.value = null
-        _isPlaying.value = false
-        minimumPositionMs = 0L
-        _currentPosition.value = 0L
-        _bufferedPosition.value = 0L
-        _duration.value = 0L
         _currentPlaybackResource.value = null
         _loadError.value = null
+        if (!preservePublishedSong) {
+            currentSongValue = null
+            _currentSong.value = null
+            _isPlaying.value = false
+            minimumPositionMs = 0L
+            _currentPosition.value = 0L
+            _bufferedPosition.value = 0L
+            _duration.value = 0L
+        }
         if (stoppedInstance > 0L) playbackReporter.onPlaybackStopped(stoppedInstance, stoppedPosition)
     }
 

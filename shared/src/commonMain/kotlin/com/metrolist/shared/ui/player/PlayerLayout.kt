@@ -102,12 +102,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.cast.CastState
+import com.metrolist.shared.deviceconnect.DeviceConnectOutputPill
+import com.metrolist.shared.deviceconnect.DeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.action_like
 import com.metrolist.shared.generated.resources.album_art
 import com.metrolist.shared.generated.resources.cast
 import com.metrolist.shared.generated.resources.close
 import com.metrolist.shared.generated.resources.collapse
+import com.metrolist.shared.generated.resources.device_connect_title
 import com.metrolist.shared.generated.resources.expand
 import com.metrolist.shared.generated.resources.local
 import com.metrolist.shared.generated.resources.lyrics
@@ -226,6 +229,9 @@ internal fun TabletPlayerContent(
     isVideoModeResolving: Boolean,
     usesFullscreenThumbnail: Boolean = false,
     usesCanvasThumbnail: Boolean = false,
+    onOpenDeviceConnect: () -> Unit = onOpenCast,
+    isDeviceConnectActive: Boolean = false,
+    deviceConnectSummary: DeviceConnectUiSummary = DeviceConnectUiSummary(),
 ) {
     val repeatMode = uiState.repeatMode
     val isShuffleOn = uiState.isShuffleOn
@@ -362,16 +368,21 @@ internal fun TabletPlayerContent(
                                     }
                                 }
                                 if (compactWidth) Spacer(Modifier.weight(1f))
-                                if (!isTv && !isListenTogetherGuest && platform.supportsCasting &&
-                                    Settings.shared.isPlayerCastButtonVisible
+                                if (!isTv && !isListenTogetherGuest && (
+                                        (platform.supportsCasting && Settings.shared.isPlayerCastButtonVisible) ||
+                                            deviceConnectSummary.enabled ||
+                                            isDeviceConnectActive
+                                    )
                                 ) {
                                     LandscapePlayerCastButton(
                                         isCasting = castState.isConnected,
+                                        isDeviceConnectActive = isDeviceConnectActive,
+                                        showCastIcon = Settings.shared.castEnabled,
                                         textColor = textBackgroundColor,
                                         buttonSize = topButtonSize,
                                         onClick = {
                                             hapticManager.perform(HapticEvent.PRESS)
-                                            onOpenCast()
+                                            onOpenDeviceConnect()
                                         },
                                     )
                                 }
@@ -601,6 +612,22 @@ internal fun TabletPlayerContent(
                     modifier = Modifier.widthIn(max = minOf(360.dp, contentMaxWidth)).fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
+                    AnimatedVisibility(
+                        visible =
+                            (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                                deviceConnectSummary.activeDeviceName.isNotBlank(),
+                        enter = expandVertically() + fadeIn(),
+                        exit = shrinkVertically() + fadeOut(),
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    ) {
+                        DeviceConnectOutputPill(
+                            deviceName = deviceConnectSummary.activeDeviceName,
+                            deviceType = deviceConnectSummary.activeDeviceType,
+                            isTransferring = deviceConnectSummary.isTransferring,
+                            isRemote = deviceConnectSummary.isFollowing,
+                            onClick = onOpenDeviceConnect,
+                        )
+                    }
                     PlayerBottomControls(
                         sleepTimerState = sleepTimerState,
                         onShowSleepTimer = onShowSleepTimer,
@@ -615,6 +642,19 @@ internal fun TabletPlayerContent(
                         isLyricsVisible = uiState.isLyricsVisible,
                         onIsLyricsVisibleChange = onIsLyricsVisibleChange,
                         isVideoAvailable = uiState.isVideoAvailable,
+                        onDeviceConnectClick =
+                            if (
+                                !isListenTogetherGuest &&
+                                (deviceConnectSummary.enabled || platform.supportsCasting || isDeviceConnectActive)
+                            ) {
+                                {
+                                    hapticManager.perform(HapticEvent.PRESS)
+                                    onOpenDeviceConnect()
+                                }
+                            } else {
+                                null
+                            },
+                        isDeviceConnectActive = isDeviceConnectActive || castState.isConnected,
                         modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
                         isListenTogetherGuest = isListenTogetherGuest,
                         controlHeight = if (compactHeight) 48.dp else 56.dp,
@@ -791,20 +831,23 @@ private fun LandscapePlayerCastButton(
     buttonSize: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    isDeviceConnectActive: Boolean = false,
+    showCastIcon: Boolean = true,
 ) {
+    val highlighted = isCasting || isDeviceConnectActive
     FilledIconButton(
         onClick = onClick,
         shapes = IconButtonDefaults.shapes(shape = CircleShape),
         colors =
             IconButtonDefaults.filledIconButtonColors(
                 containerColor =
-                    if (isCasting) {
+                    if (highlighted) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.surfaceVariant
                     },
                 contentColor =
-                    if (isCasting) {
+                    if (highlighted) {
                         MaterialTheme.colorScheme.onPrimary
                     } else {
                         textColor
@@ -815,12 +858,24 @@ private fun LandscapePlayerCastButton(
                 .size(buttonSize)
                 .tvFocusHighlight(
                     CircleShape,
-                    color = if (isCasting) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
+                    color = if (highlighted) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary,
                 ).playerControlBlend(),
     ) {
+        val descriptionRes =
+            if (!showCastIcon || isDeviceConnectActive) {
+                Res.string.device_connect_title
+            } else {
+                Res.string.cast
+            }
         Icon(
-            imageVector = if (isCasting) MetrolistIcons.Filled.Cast else MetrolistIcons.Outlined.Cast,
-            contentDescription = stringResource(Res.string.cast),
+            imageVector =
+                when {
+                    isCasting -> MetrolistIcons.Filled.Cast
+                    isDeviceConnectActive -> MetrolistIcons.Filled.Devices
+                    showCastIcon -> MetrolistIcons.Outlined.Cast
+                    else -> MetrolistIcons.Outlined.Devices
+                },
+            contentDescription = stringResource(descriptionRes),
             modifier = Modifier.size(20.dp),
         )
     }
@@ -875,6 +930,9 @@ internal fun LandscapePlayerContent(
     isVideoModeResolving: Boolean = false,
     usesFullscreenThumbnail: Boolean = false,
     usesCanvasThumbnail: Boolean = false,
+    onOpenDeviceConnect: () -> Unit = onOpenCast,
+    isDeviceConnectActive: Boolean = false,
+    deviceConnectSummary: DeviceConnectUiSummary = DeviceConnectUiSummary(),
 ) {
     val repeatMode = uiState.repeatMode
     val isShuffleOn = uiState.isShuffleOn
@@ -1048,6 +1106,19 @@ internal fun LandscapePlayerContent(
                                     ?.takeIf { sleepTimerState.isActive }
                                     ?.let(::formatSleepTimerRemaining),
                             sleepTimerContentDescription = sleepTimerContentDescription(sleepTimerState),
+                            onDeviceConnectClick =
+                                if (
+                                    !isListenTogetherGuest &&
+                                    (deviceConnectSummary.enabled || platform.supportsCasting || isDeviceConnectActive)
+                                ) {
+                                    {
+                                        hapticManager.perform(HapticEvent.PRESS)
+                                        onOpenDeviceConnect()
+                                    }
+                                } else {
+                                    null
+                                },
+                            isDeviceConnectActive = isDeviceConnectActive || castState.isConnected,
                             touchTarget = if (compactHeight) 36.dp else 40.dp,
                         )
 
@@ -1165,14 +1236,21 @@ internal fun LandscapePlayerContent(
             }
         }
 
-        if (!isTv && !isListenTogetherGuest && platform.supportsCasting && Settings.shared.isPlayerCastButtonVisible) {
+        if (!isTv && !isListenTogetherGuest && (
+                (platform.supportsCasting && Settings.shared.isPlayerCastButtonVisible) ||
+                    deviceConnectSummary.enabled ||
+                    isDeviceConnectActive
+            )
+        ) {
             LandscapePlayerCastButton(
                 isCasting = castState.isConnected,
+                isDeviceConnectActive = isDeviceConnectActive,
+                showCastIcon = Settings.shared.castEnabled,
                 textColor = controlsColor,
                 buttonSize = topButtonSize,
                 onClick = {
                     hapticManager.perform(HapticEvent.PRESS)
-                    onOpenCast()
+                    onOpenDeviceConnect()
                 },
                 modifier =
                     Modifier
@@ -1446,6 +1524,28 @@ internal fun LandscapePlayerContent(
                         }
 
                         val progressAndControls: @Composable ColumnScope.() -> Unit = {
+                            AnimatedVisibility(
+                                visible =
+                                    (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                                        deviceConnectSummary.activeDeviceName.isNotBlank(),
+                                enter = expandVertically() + fadeIn(),
+                                exit = shrinkVertically() + fadeOut(),
+                                modifier = Modifier.fillMaxWidth().padding(top = if (compactHeight) 6.dp else 10.dp),
+                            ) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    DeviceConnectOutputPill(
+                                        deviceName = deviceConnectSummary.activeDeviceName,
+                                        deviceType = deviceConnectSummary.activeDeviceType,
+                                        isTransferring = deviceConnectSummary.isTransferring,
+                                        isRemote = deviceConnectSummary.isFollowing,
+                                        onClick = onOpenDeviceConnect,
+                                    )
+                                }
+                            }
+
                             Spacer(modifier = Modifier.height(if (compactHeight) 8.dp else 16.dp))
 
                             PlayerProgressSlider(
