@@ -42,6 +42,7 @@ data class PlaybackResource(
     val musicVideoId: String? = null,
     val musicVideoPositionMap: CounterpartPositionMap? = null,
     val allowPlaybackTrackingFallback: Boolean = false,
+    val preferFreshWebRemixTracking: Boolean = false,
     val sabrTokenSupplier: (suspend () -> ByteArray?)? = null,
     val onSabrAttestationPending: (() -> Unit)? = null,
 ) {

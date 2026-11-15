@@ -5,6 +5,7 @@ import com.metrolist.innertubex.InnerTubeHttpException
 import com.metrolist.innertubex.bodyAsTextLimited
 import com.metrolist.innertubex.extraction.ContentHints
 import com.metrolist.innertubex.extraction.PlaybackTrackingData
+import com.metrolist.innertubex.extraction.YtConfigParser
 import com.metrolist.innertubex.models.AccountInfo
 import com.metrolist.innertubex.models.YouTubeClient
 import com.metrolist.innertubex.models.YouTubeDataPage
@@ -300,6 +301,8 @@ class YouTubeRepository(
     private val databaseProvider: () -> MusicDatabase? = { null },
     private val offlineSongAvailabilityProvider: () -> OfflineSongAvailability? = { null },
     private val nowMs: () -> Long = { Clock.System.now().toEpochMilliseconds() },
+    private val ytConfigParserProvider: () -> YtConfigParser? = { null },
+    private val fetchWebRemixSessionContext: Boolean = false,
 ) {
     companion object {
         private const val TAG = "YouTubeRepository"
@@ -1938,7 +1941,13 @@ class YouTubeRepository(
 
     suspend fun removeHistoryItems(feedbackTokens: List<String>) = historyOperations.removeHistoryItems(feedbackTokens)
 
-    private val playbackTracking = YouTubePlaybackTracking(innerTube)
+    private val playbackTracking =
+        YouTubePlaybackTracking(
+            innerTube = innerTube,
+            ytConfigParserProvider = ytConfigParserProvider,
+            fetchWebRemixSessionContext = fetchWebRemixSessionContext,
+            nowMs = nowMs,
+        )
 
     suspend fun getPlaybackTrackingUrl(
         videoId: String,
@@ -1959,6 +1968,12 @@ class YouTubeRepository(
         playbackSession: PlaybackTrackingSession,
     ): PlaybackTrackingData? = playbackTracking.getPlaybackTracking(videoId, clientPlaybackNonce, playbackSession)
 
+    internal suspend fun getResolvedPlaybackTracking(
+        videoId: String,
+        clientPlaybackNonce: String,
+        playbackSession: PlaybackTrackingSession,
+    ): ResolvedPlaybackTracking? = playbackTracking.getResolvedPlaybackTracking(videoId, clientPlaybackNonce, playbackSession)
+
     internal fun isPlaybackReportingEnabled(): Boolean = playbackTracking.isPlaybackReportingEnabled()
 
     internal suspend fun registerPlayback(
@@ -1973,6 +1988,17 @@ class YouTubeRepository(
             clientPlaybackNonce,
             currentMediaTime,
             format,
+            playbackSession,
+        )
+
+    internal suspend fun registerAtr(
+        atrTrackingUrl: String,
+        clientPlaybackNonce: String,
+        playbackSession: PlaybackTrackingSession,
+    ): Boolean =
+        playbackTracking.registerAtr(
+            atrTrackingUrl,
+            clientPlaybackNonce,
             playbackSession,
         )
 

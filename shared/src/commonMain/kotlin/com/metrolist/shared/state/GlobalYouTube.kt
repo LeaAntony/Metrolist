@@ -3,6 +3,7 @@ package com.metrolist.shared.state
 import com.metrolist.innertubex.InnerTube
 import com.metrolist.innertubex.cipher.YouTubeCipherService
 import com.metrolist.innertubex.extraction.TokenProvider
+import com.metrolist.innertubex.extraction.YtConfigParser
 import com.metrolist.innertubex.models.YouTubeLocale
 import com.metrolist.shared.api.YouTubeRepository
 import com.metrolist.shared.db.MusicDatabase
@@ -35,6 +36,8 @@ object GlobalYouTube {
             ::currentStreamResolver,
             databaseProvider = { KoinPlatform.getKoinOrNull()?.getOrNull<MusicDatabase>() },
             offlineSongAvailabilityProvider = { KoinPlatform.getKoinOrNull()?.getOrNull<OfflineSongAvailability>() },
+            ytConfigParserProvider = { KoinPlatform.getKoinOrNull()?.getOrNull<YtConfigParser>() },
+            fetchWebRemixSessionContext = true,
         )
     private val playbackSessionGenerationCounter = atomic(0L)
     val playbackSessionGeneration: Long get() = playbackSessionGenerationCounter.value

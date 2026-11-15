@@ -1168,6 +1168,8 @@ class DefaultStreamResolver(
             useRangeChunks = useRangeChunks,
             rangeChunkSizeBytes = rangeChunkSizeBytes,
             playbackTracking = playbackTracking,
+            allowPlaybackTrackingFallback = !videoId.startsWith("local_"),
+            preferFreshWebRemixTracking = !videoId.startsWith("local_"),
             streamDiagnostics = streamDiagnostics,
             videoUrl = videoUrl,
             videoWidth = videoWidth,
