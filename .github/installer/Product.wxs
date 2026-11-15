@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="Metrolist"
+           Language="1033"
+           Version="$(var.MsiVersion)"
+           Manufacturer="MetrolistGroup"
+           UpgradeCode="6F1B4A8E-7C5A-4E2A-B734-A9A5A0F9C101">
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Platform="x64"
+             Description="Metrolist desktop music client" />
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="MetrolistIcon.exe" SourceFile="$(var.IconPath)" />
+    <Property Id="ARPPRODUCTICON" Value="MetrolistIcon.exe" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="Metrolist" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="Metrolist" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="InstallManifestComponent" Guid="91A2E5C4-4A28-4C32-A95B-2C4B767B1120" Win64="yes">
+        <File Id="InstallManifestJson"
+              Source="$(var.ManifestPath)"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ApplicationProgramsFolder">
+      <Component Id="ApplicationShortcuts" Guid="5B7F89F0-34B8-4E6D-9B72-7C8E61FA2031" Win64="yes">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="Metrolist"
+                  Description="Metrolist YouTube Music client"
+                  Target="[INSTALLFOLDER]Metrolist.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MetrolistIcon.exe" />
+        <Shortcut Id="DesktopShortcut"
+                  Directory="DesktopFolder"
+                  Name="Metrolist"
+                  Description="Metrolist YouTube Music client"
+                  Target="[INSTALLFOLDER]Metrolist.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MetrolistIcon.exe" />
+        <RemoveFolder Id="CleanAppProgramsDir" Directory="ApplicationProgramsFolder" On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="Software\MetrolistGroup\Metrolist"
+                       Name="ShortcutsInstalled"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="ProductFeature" Title="Metrolist" Level="1">
+      <ComponentGroupRef Id="AppFiles" />
+      <ComponentRef Id="InstallManifestComponent" />
+      <ComponentRef Id="ApplicationShortcuts" />
+    </Feature>
+  </Product>
+</Wix>

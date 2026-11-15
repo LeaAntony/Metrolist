@@ -1,0 +1,328 @@
+name: Fork Android & Windows Release
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - 'fastlane/**'
+      - 'assets/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Resolve build version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      base_version: ${{ steps.version.outputs.base_version }}
+      package_version: ${{ steps.version.outputs.package_version }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Read appVersion
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw_version="$(sed -n 's/^appVersion=//p' gradle.properties | tr -d '\r')"
+          base_version="${raw_version%%+*}"
+          [[ "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9][A-Za-z0-9._-]*)?$ ]] || {
+            echo "Invalid appVersion in gradle.properties: $raw_version" >&2
+            exit 1
+          }
+          package_version="${base_version}+${GITHUB_SHA:0:7}"
+          echo "base_version=$base_version" >> "$GITHUB_OUTPUT"
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android Release APK
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Validate Compose resources and APK collection
+        run: |
+          python3 scripts/check_compose_resource_escapes.py
+          python3 -m unittest discover -s scripts -p 'test_collect_android_apks.py'
+
+      - name: Prepare CI Gradle
+        uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: fork-android-release
+          persist-configuration-cache: 'false'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4
+        with:
+          packages: platform-tools
+
+      - name: Prepare Android signing
+        id: signing
+        uses: ./.github/actions/prepare-android-signing
+        env:
+          KEYSTORE_PATH: ${{ secrets.KEYSTORE_PATH || secrets.KEYSTORE }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Require Android signing
+        if: (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && steps.signing.outputs.signing_available != 'true'
+        shell: bash
+        run: |
+          echo "Android release signing secrets (KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS, KEY_PASSWORD) are required." >&2
+          exit 1
+
+      - name: Build Android Release APK
+        shell: bash
+        env:
+          ORG_GRADLE_PROJECT_appVersion: ${{ needs.version.outputs.package_version }}
+          KEYSTORE_PATH: ${{ steps.signing.outputs.keystore_path }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+          LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          ./gradlew :androidApp:assembleRelease \
+            --no-daemon \
+            --no-configuration-cache \
+            -x :androidApp:lintVitalRelease
+
+      - name: Collect APK and mapping
+        shell: bash
+        env:
+          APP_VERSION: ${{ needs.version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          python3 scripts/collect_android_apks.py \
+            androidApp/build/outputs/apk/release dist "$APP_VERSION" release
+          cp androidApp/build/outputs/mapping/release/mapping.txt dist/Metrolist-KMP-mapping.txt
+
+      - name: Verify APK signature
+        if: steps.signing.outputs.signing_available == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          apksigners=("$ANDROID_HOME"/build-tools/*/apksigner)
+          test ${#apksigners[@]} -gt 0 && test -x "${apksigners[-1]}" || { echo "apksigner was not found" >&2; exit 1; }
+          "${apksigners[-1]}" verify --verbose --print-certs dist/Metrolist.apk
+
+      - name: Upload Android APK artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fork-android-apk
+          path: |
+            dist/Metrolist.apk
+            dist/Metrolist-KMP-mapping.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows Offline Installer
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Prepare CI Gradle
+        uses: ./.github/actions/prepare-ci-gradle
+        with:
+          cache-scope: fork-desktop-windows
+          persist-configuration-cache: 'false'
+          cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Generate installer icons
+        uses: ./.github/actions/generate-icons
+
+      - name: Set up .NET 10 SDK
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6
+        with:
+          global-json-file: metro-wv2-helper/global.json
+
+      - name: Cache NuGet packages
+        if: github.event_name != 'pull_request'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('metro-wv2-helper/global.json', 'metro-wv2-helper/**/*.csproj') }}
+
+      - name: Restore NuGet packages (read-only)
+        if: github.event_name == 'pull_request'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('metro-wv2-helper/global.json', 'metro-wv2-helper/**/*.csproj') }}
+
+      - name: Build Windows login helper
+        shell: pwsh
+        working-directory: metro-wv2-helper
+        run: |
+          dotnet run --project tests/LoginCompletion.Tests.csproj --configuration Release
+          if ($LASTEXITCODE -ne 0) { throw "Windows login helper tests failed ($LASTEXITCODE)" }
+          $output = "../desktopApp/src/desktopMain/resources/windows"
+          dotnet publish "metro-wv2-helper.csproj" --configuration Release --runtime win-x64 --self-contained true --output $output -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=None -p:DebugSymbols=false -p:PublishReadyToRun=true
+          if ($LASTEXITCODE -ne 0) { throw "Windows login helper build failed ($LASTEXITCODE)" }
+
+      - name: Build Windows release application
+        shell: bash
+        env:
+          ORG_GRADLE_PROJECT_appVersion: ${{ needs.version.outputs.package_version }}
+          LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
+          LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
+          LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
+          LYPRIO_HMAC_KEY: ${{ secrets.LYPRIO_HMAC_KEY }}
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          ./gradlew :desktopApp:assembleWindowsRelease \
+            -Pmetrolist.debug=false \
+            -Pmetrolist.verifyPackaging=true \
+            -Pmetrolist.desktop.arch=x86_64 \
+            --no-daemon \
+            --no-configuration-cache
+
+      - name: Build offline Windows Setup EXE
+        shell: pwsh
+        env:
+          BASE_VERSION: ${{ needs.version.outputs.base_version }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if (-not (Test-Path "build/wix311/light.exe")) {
+            & ./gradlew.bat :unzipWix --no-daemon --no-configuration-cache
+            if ($LASTEXITCODE -ne 0) { throw "Failed to prepare WiX 3.11 ($LASTEXITCODE)" }
+          }
+          & ./.github/installer/build-windows-installer.ps1 `
+            -Version $env:BASE_VERSION `
+            -BuildNumber ([int]$env:RUN_NUMBER) `
+            -OutputExe "dist/Metrolist-Setup-$($env:BASE_VERSION)-win-x64.exe"
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fork-windows-installer
+          path: |
+            dist/Metrolist-Setup-*.exe
+            dist/Metrolist-Desktop-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: [version, android, windows]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download signed Android APK
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: fork-android-apk
+          path: release-assets
+
+      - name: Download Windows installer
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: fork-windows-installer
+          path: release-assets
+
+      - name: Verify and stage release assets
+        shell: bash
+        env:
+          BASE_VERSION: ${{ needs.version.outputs.base_version }}
+        run: |
+          set -euo pipefail
+          installer="release-assets/Metrolist-Setup-${BASE_VERSION}-win-x64.exe"
+          apk="release-assets/Metrolist.apk"
+          test -s "$apk" || { echo "Missing or empty $apk" >&2; exit 1; }
+          test -s "$installer" || { echo "Missing or empty $installer" >&2; exit 1; }
+          mkdir -p upload-assets
+          cp "$apk" upload-assets/Metrolist.apk
+          cp "$installer" "upload-assets/Metrolist-Setup-${BASE_VERSION}-win-x64.exe"
+          ls -lh upload-assets/
+
+      - name: Write release notes
+        shell: bash
+        env:
+          PACKAGE_VERSION: ${{ needs.version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          {
+            printf 'Fork build `%s` from [%s](https://github.com/%s/commit/%s).\n' \
+              "$PACKAGE_VERSION" "${GITHUB_SHA:0:7}" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
+            printf '\n## Changes\n\n'
+            if previous="$(git rev-parse --verify 'refs/tags/latest^{commit}' 2>/dev/null)"; then
+              git log --first-parent --max-count=30 --format='* %s (%h)' "$previous..$GITHUB_SHA"
+            else
+              git log --first-parent --max-count=30 --format='* %s (%h)' "$GITHUB_SHA"
+            fi
+          } > "$RUNNER_TEMP/release-notes.md"
+
+      - name: Publish release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PACKAGE_VERSION: ${{ needs.version.outputs.package_version }}
+        run: |
+          set -euo pipefail
+          if git show-ref --verify --quiet refs/tags/latest; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" \
+              -f sha="$GITHUB_SHA" -F force=true
+          else
+            gh api --method POST "repos/$GH_REPO/git/refs" \
+              -f ref=refs/tags/latest -f sha="$GITHUB_SHA"
+          fi
+
+          if gh release view latest --json assets --jq '.assets[].name' > "$RUNNER_TEMP/old-assets.txt" 2>/dev/null; then
+            gh release edit latest --draft --latest
+            while IFS= read -r asset; do
+              [[ -n "$asset" ]] && gh release delete-asset latest "$asset" --yes
+            done < "$RUNNER_TEMP/old-assets.txt"
+          else
+            gh release create latest --verify-tag --target "$GITHUB_SHA" \
+              --title "Metrolist $PACKAGE_VERSION" --draft --latest
+          fi
+
+          gh release upload latest upload-assets/* --clobber
+          gh release edit latest --target "$GITHUB_SHA" \
+            --title "Metrolist $PACKAGE_VERSION" \
+            --notes-file "$RUNNER_TEMP/release-notes.md" \
+            --draft=false --prerelease=false --latest
