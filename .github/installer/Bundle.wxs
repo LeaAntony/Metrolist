@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+  <Bundle Name="Metrolist"
+          Version="$(var.MsiVersion)"
+          Manufacturer="MetrolistGroup"
+          UpgradeCode="B2E4C910-81F2-47A9-8A12-1E4F9D0B3C22"
+          IconSourceFile="$(var.IconPath)"
+          AboutUrl="https://github.com/LeaAntony/Metrolist">
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication
+        LicenseUrl=""
+        SuppressOptionsUI="yes"
+        LaunchTarget="[ProgramFiles64Folder]Metrolist\Metrolist.exe" />
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <MsiPackage SourceFile="$(var.MsiPath)"
+                  Vital="yes"
+                  Visible="no" />
+    </Chain>
+  </Bundle>
+</Wix>
