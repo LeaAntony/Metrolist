@@ -159,6 +159,7 @@ fun FullscreenPlayerContent(
     onShowSleepTimer: () -> Unit,
     onOpenCast: () -> Unit,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     canControlPlayback: Boolean,
     backHandlerEnabled: Boolean = true,
     onOpenDeviceConnect: () -> Unit = onOpenCast,
@@ -299,6 +300,7 @@ fun FullscreenPlayerContent(
                         currentPositionFlow = viewModel.currentPosition,
                         isPlaying = isPlaying,
                         isCasting = isCasting,
+                        isBuffering = isBuffering,
                         offset = subtitleOffset,
                         onOffsetChange = { subtitleOffset = it },
                     )
@@ -333,6 +335,7 @@ fun FullscreenPlayerContent(
                                     isLoading = uiState.isLyricsLoading,
                                     textColor = Color.White,
                                     isCasting = isCasting,
+                                    isBuffering = isBuffering,
                                 )
                             }
                         } else if (uiState.isQueueVisible || queueClosing) {
@@ -379,6 +382,7 @@ private fun FullscreenControlsOverlay(
     onToggleSubtitle: () -> Unit,
     onOpenCast: () -> Unit,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     canControlPlayback: Boolean,
     visible: Boolean,
     onVisibilityChange: (Boolean) -> Unit,
@@ -704,6 +708,7 @@ private fun SubtitleOverlay(
     currentPositionFlow: StateFlow<Long>,
     isPlaying: Boolean,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     offset: IntOffset,
     onOffsetChange: (IntOffset) -> Unit,
 ) {
@@ -728,6 +733,7 @@ private fun SubtitleOverlay(
             songId = uiState.currentSong?.id,
             timingOffsetMs = lyricsOffsetMs,
             isCasting = isCasting,
+            isBuffering = isBuffering,
             finalLineDurationMs = LyricsUtils.FINAL_DYNAMIC_LINE_DURATION_MS,
         )
 

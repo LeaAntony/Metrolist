@@ -15,6 +15,7 @@ import com.metrolist.shared.api.lyrics.YouTubeSubtitleLyricsProvider
 import com.metrolist.shared.api.lyrics.YouTubeTranscriptCue
 import com.metrolist.shared.api.lyrics.lyricsTimingKind
 import com.metrolist.shared.api.lyrics.lyricsTranslationFailure
+import com.metrolist.shared.api.lyrics.lyricsTranslationLanguageMatches
 import com.metrolist.shared.api.lyrics.lyricsTranslationTargetLanguage
 import com.metrolist.shared.api.lyrics.retryLyricsTranslation
 import com.metrolist.shared.api.lyrics.romanizer.LyricsRomanizer
@@ -335,12 +336,12 @@ class LyricsRepository(
             ?.takeIf {
                 it.provider != LyricsEntity.LYRICS_NOT_FOUND && it.lyrics.isNotBlank() &&
                     (
-                        it.isUserSelected || isLocalLyricsProvider(it.provider) ||
+                        it.isLegacyProtected || it.isUserSelected || isLocalLyricsProvider(it.provider) ||
                             isRetiredLyricsProvider(it.provider) ||
                             providerPriority(it.provider, providers) != Int.MAX_VALUE
                     ) &&
-                    (isLocalLyricsProvider(it.provider) || usableProviderLyrics(LyricsUtils.parseLyrics(it.lyrics)))
-            }?.let { LyricsWithProviderModel(it.lyrics, it.provider, isUserSelected = it.isUserSelected) }
+                    (it.isLegacyProtected || isLocalLyricsProvider(it.provider) || usableProviderLyrics(LyricsUtils.parseLyrics(it.lyrics)))
+            }?.let { LyricsWithProviderModel(it.lyrics, it.provider, isUserSelected = it.isUserSelected || it.isLegacyProtected) }
 
     suspend fun getLyrics(
         videoId: String,
@@ -477,8 +478,10 @@ class LyricsRepository(
                                 missExpiresAt = if (selectedResult == null) nowMs() + NEGATIVE_CACHE_TTL_MS else null,
                             ),
                         expected = expected,
+                        allowLegacyOverwrite = skipCache,
                     )
-                if (stored == null || stored.isUserSelected || isLocalLyricsProvider(stored.provider) || selectedResult == null ||
+                if (stored == null || stored.isLegacyProtected || stored.isUserSelected || isLocalLyricsProvider(stored.provider) ||
+                    selectedResult == null ||
                     !prefersLyrics(selectedResult, LyricsWithProviderModel(stored.lyrics, stored.provider), providers, preferWordSynced)
                 ) {
                     break
@@ -732,8 +735,11 @@ class LyricsRepository(
                 ?.cachedLyrics(videoId)
                 ?.takeIf {
                     it.provider != LyricsEntity.LYRICS_NOT_FOUND && it.lyrics.isNotBlank() &&
-                        (isLocalLyricsProvider(it.provider) || usableProviderLyrics(LyricsUtils.parseLyrics(it.lyrics)))
-                }?.let { LyricsWithProviderModel(it.lyrics, it.provider, isUserSelected = it.isUserSelected) }
+                        (
+                            it.isLegacyProtected || isLocalLyricsProvider(it.provider) ||
+                                usableProviderLyrics(LyricsUtils.parseLyrics(it.lyrics))
+                        )
+                }?.let { LyricsWithProviderModel(it.lyrics, it.provider, isUserSelected = it.isUserSelected || it.isLegacyProtected) }
         if (!skipCache && cached != null && (cached.isUserSelected || isLocalLyricsProvider(cached.provider))) return cached
         var bestResult =
             cached?.takeIf {
@@ -870,8 +876,26 @@ class LyricsRepository(
         onTranslationFailure: suspend (LyricsTranslationFailure) -> Unit = {},
     ): List<LyricsEntry> {
         if (entries.isEmpty()) return entries
+        val targetLanguage = lyricsTranslationTargetLanguage()
+        val translationStyle = Settings.shared.lyricsAiTranslationMode
+        val preserveUserTranslations =
+            entries.any { !it.translatedText.isNullOrBlank() || !it.backgroundTranslatedText.isNullOrBlank() } &&
+                getUserLyrics(videoId) != null
+        var enriched =
+            entries.map { entry ->
+                if (preserveUserTranslations ||
+                    (
+                        entry.translationMode == translationStyle &&
+                            lyricsTranslationLanguageMatches(entry.translationLanguage.orEmpty(), targetLanguage)
+                    )
+                ) {
+                    entry
+                } else {
+                    entry.copy(translatedText = null, backgroundTranslatedText = null)
+                }
+            }
         val nonEmpty =
-            entries.mapIndexedNotNull { index, entry ->
+            enriched.mapIndexedNotNull { index, entry ->
                 if (entry.text.isNotBlank() ||
                     !entry.words.isNullOrEmpty() || !entry.backgroundText.isNullOrBlank()
                 ) {
@@ -880,9 +904,8 @@ class LyricsRepository(
                     null
                 }
             }
-        if (nonEmpty.isEmpty()) return entries
+        if (nonEmpty.isEmpty()) return enriched
 
-        var enriched = entries
         val sourceLines = nonEmpty.map { (_, entry) -> translationSourceLine(entry) }
         val dictionaryDetectionText = romanizationDetectionText(entries)
         val prepareDictionary: suspend () -> Boolean = {
@@ -896,9 +919,7 @@ class LyricsRepository(
                     val pieces = part.split(':', limit = 2)
                     pieces.getOrNull(0)?.takeIf { pieces.getOrNull(1)?.toBooleanStrictOrNull() ?: false }
                 }.toSet()
-        val romanizationEnabled = Settings.shared.lyricsRomanizationEnabled
-        val targetLanguage = lyricsTranslationTargetLanguage()
-        val translationStyle = Settings.shared.lyricsAiTranslationMode
+        val romanizationEnabled = Settings.shared.isLyricsRomanizationActive
         val backgroundSources =
             if (translationStyle == "Romanized") {
                 emptyList()
@@ -936,7 +957,6 @@ class LyricsRepository(
                     translationLines,
                     sourceWordsPerLine,
                     allowNotNeeded = !forceAiTranslation,
-                    allowLegacyTranslation = !allowRemoteTranslation,
                 )
             val aiResult =
                 if (cachedTranslation != null) {
@@ -980,13 +1000,13 @@ class LyricsRepository(
                                                             if (translationStyle == "Romanized") {
                                                                 entries[it].romanizedText.isNullOrBlank()
                                                             } else {
-                                                                entries[it].translatedText.isNullOrBlank()
+                                                                enriched[it].translatedText.isNullOrBlank()
                                                             }
                                                         }.toSet(),
                                                 backgroundLines =
                                                     selected
                                                         .mapNotNull { backgroundSources.getOrNull(it - nonEmpty.size)?.first }
-                                                        .filter { entries[it].backgroundTranslatedText.isNullOrBlank() }
+                                                        .filter { enriched[it].backgroundTranslatedText.isNullOrBlank() }
                                                         .toSet(),
                                             ),
                                         )
@@ -1018,7 +1038,8 @@ class LyricsRepository(
                                 coroutineContext.ensureActive()
                                 val translated =
                                     aiResult.translatedLines?.getOrNull(translationIndex)?.takeIf {
-                                        it.isNotBlank() && it != translationLines[translationIndex]
+                                        it.isNotBlank() && it != translationLines[translationIndex] &&
+                                            (!preserveUserTranslations || entry.translatedText.isNullOrBlank())
                                     }
                                 val romanized = aiResult.romanizedLines?.getOrNull(translationIndex)?.takeIf { it.isNotBlank() }
                                 val aiWords = aiResult.romanizedWordsPerLine?.getOrNull(translationIndex)
@@ -1037,7 +1058,9 @@ class LyricsRepository(
                                     }
                                 mutable[entryIndex] =
                                     entry.copy(
-                                        translatedText = entry.translatedText?.takeIf { it.isNotBlank() } ?: translated,
+                                        translatedText = translated ?: entry.translatedText,
+                                        translationLanguage = if (translated != null) targetLanguage else entry.translationLanguage,
+                                        translationMode = if (translated != null) translationStyle else entry.translationMode,
                                         romanizedText =
                                             if (!entry.romanizedText.isNullOrBlank()) {
                                                 entry.romanizedText
@@ -1057,13 +1080,19 @@ class LyricsRepository(
                                     )
                             }
                             backgroundSources.forEachIndexed { index, (entryIndex, source) ->
+                                val entry = mutable[entryIndex]
                                 val translated =
                                     aiResult.translatedLines
                                         ?.getOrNull(nonEmpty.size + index)
-                                        ?.takeIf { it.isNotBlank() && it != source }
+                                        ?.takeIf {
+                                            it.isNotBlank() && it != source &&
+                                                (!preserveUserTranslations || entry.backgroundTranslatedText.isNullOrBlank())
+                                        }
                                 mutable[entryIndex] =
-                                    mutable[entryIndex].copy(
-                                        backgroundTranslatedText = translated ?: mutable[entryIndex].backgroundTranslatedText,
+                                    entry.copy(
+                                        backgroundTranslatedText = translated ?: entry.backgroundTranslatedText,
+                                        translationLanguage = if (translated != null) targetLanguage else entry.translationLanguage,
+                                        translationMode = if (translated != null) translationStyle else entry.translationMode,
                                     )
                             }
                         }
@@ -1176,28 +1205,18 @@ class LyricsRepository(
         sourceLines: List<String>,
         sourceWordsPerLine: List<List<String>?>,
         allowNotNeeded: Boolean,
-        allowLegacyTranslation: Boolean = false,
     ): CachedLyricsTranslation? {
         val entity = databaseDao?.lyrics(videoId)?.firstOrNull() ?: return null
-        val configKeys =
-            if (allowLegacyTranslation && configKey.endsWith("|passages-v1|false")) {
-                val previousKey = configKey.removeSuffix("|passages-v1|false")
-                listOf(configKey, previousKey, "$previousKey|vocals-v1|false")
-            } else {
-                listOf(configKey)
-            }
-        return configKeys.firstNotNullOfOrNull { key ->
-            readCachedTranslation(
-                entity,
-                targetLanguage,
-                translationStyle,
-                sourceHash,
-                key,
-                sourceLines,
-                sourceWordsPerLine,
-                allowNotNeeded = allowNotNeeded && key == configKey,
-            )
-        }
+        return readCachedTranslation(
+            entity,
+            targetLanguage,
+            translationStyle,
+            sourceHash,
+            configKey,
+            sourceLines,
+            sourceWordsPerLine,
+            allowNotNeeded = allowNotNeeded,
+        )
     }
 
     internal fun readCachedTranslation(
@@ -1212,7 +1231,7 @@ class LyricsRepository(
     ): CachedLyricsTranslation? {
         val configMatches =
             entity.translationConfigKey == configKey ||
-                (!entity.translationNotNeeded && entity.translationConfigKey in legacyTranslationConfigKeys(configKey))
+                (!entity.translationNotNeeded && entity.translationConfigKey in completedTranslationConfigKeys(configKey))
         val valid =
             entity.translationLanguage == targetLanguage &&
                 entity.translationMode == translationStyle &&
@@ -1414,10 +1433,28 @@ class LyricsRepository(
         )
     }
 
-    private fun legacyTranslationConfigKeys(configKey: String): List<String> =
-        LEGACY_AI_TRANSLATION_CACHE_VERSIONS.map { version ->
-            configKey.replaceFirst("$AI_TRANSLATION_CACHE_VERSION|", "$version|")
+    private fun completedTranslationConfigKeys(configKey: String): List<String> {
+        // Detection policy changes invalidate negative decisions, not completed translations.
+        val baseKey = configKey.removeSuffix("|passages-v1|false").removeSuffix("|passages-v1|true")
+        val keys =
+            if (baseKey != configKey) {
+                listOf(
+                    baseKey,
+                    "$baseKey|passages-v1|false",
+                    "$baseKey|passages-v1|true",
+                    "$baseKey|vocals-v1|false",
+                    "$baseKey|vocals-v1|true",
+                )
+            } else {
+                listOf(configKey)
+            }
+        return keys.flatMap { key ->
+            listOf(key) +
+                LEGACY_AI_TRANSLATION_CACHE_VERSIONS.map { version ->
+                    key.replaceFirst("$AI_TRANSLATION_CACHE_VERSION|", "$version|")
+                }
         }
+    }
 
     internal fun buildTranslationConfigKey(): String =
         listOf(

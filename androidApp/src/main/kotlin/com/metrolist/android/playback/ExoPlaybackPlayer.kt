@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -359,6 +360,7 @@ class ExoPlaybackPlayer(
     private val forwardedPlayerListeners = linkedSetOf<Player.Listener>()
     private var preferredAudioDevice: AudioDeviceInfo? = null
     private var offloadFailed = false
+    private val offloadSleepStallTracker = OffloadSleepStallTracker()
     private val progressWatchdog = PlaybackProgressWatchdog()
     private var audioOutputEnabled = true
     private var outputRecoveryState = AudioOutputRecoveryState()
@@ -407,7 +409,6 @@ class ExoPlaybackPlayer(
                 normalizationProcessors[this] = normalization
                 silenceSupport[this] = silence
                 silence.attach(this)
-                systemAudioEffects.attach(this)
                 val player = this
                 PlaybackEventLog.info(
                     PlaybackEventKind.PLAYER,
@@ -873,6 +874,14 @@ class ExoPlaybackPlayer(
         object : ExoPlayer.AudioOffloadListener {
             override fun onSleepingForOffloadChanged(sleepingForOffload: Boolean) {
                 if (source !== exo) return
+                if (sleepingForOffload && offloadRequested()) {
+                    offloadSleepStallTracker.onSleepingForOffload(
+                        nowMs = SystemClock.elapsedRealtime(),
+                        outputPosition = silenceSupport[source]?.playbackHeadPosition,
+                    )
+                } else if (!sleepingForOffload) {
+                    offloadSleepStallTracker.reset()
+                }
                 recordPlaybackState("Android offload sleep changed.")
             }
         }
@@ -1577,6 +1586,7 @@ class ExoPlaybackPlayer(
     }
 
     private fun attachPlayerListeners(player: ExoPlayer) {
+        systemAudioEffects.attach(player)
         _playbackState.value = player.playbackState
         playbackListener = createPlaybackListener(player)
         networkLoadListener = createNetworkLoadListener(player)
@@ -2040,6 +2050,7 @@ class ExoPlaybackPlayer(
     }
 
     private fun syncNextPlayback() {
+        if (nextStarted) nextPlayer?.let(systemAudioEffects::attach)
         nextPlayer?.playWhenReady =
             exo.playWhenReady && nextStarted && !nextHeldAtStart &&
             exo.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_TRANSIENT_AUDIO_FOCUS_LOSS
@@ -2161,6 +2172,7 @@ class ExoPlaybackPlayer(
         nextPlayerListener?.let(candidate::removeListener)
         nextPlayerListener = null
         exo = candidate
+        offloadSleepStallTracker.reset()
         sabrPlaybackCache.release(activeAudioSource)
         activeAudioSource?.closePlaybackSource()
         activeVideoSource?.closePlaybackSource()
@@ -2724,6 +2736,7 @@ class ExoPlaybackPlayer(
                         incoming = candidate,
                         releaseOutgoing = { releasePlayer(previousPlayer) },
                         promoteIncoming = {
+                            offloadSleepStallTracker.reset()
                             exo = candidate
                             currentResource = preparedResource
                             activeAudioSource = nextAudioSource
@@ -2992,6 +3005,7 @@ class ExoPlaybackPlayer(
         if (controllerClock != null) return
         val isLive = currentResource?.isLive == true || currentSongValue?.isLive == true || exo.isCurrentMediaItemLive
         val position = if (isLive) getLiveSessionPositionMs() else getRealtimePositionMs()
+        val progressPosition = playbackProgressPositionMs(isLive, exo.currentPosition, position)
         _currentPosition.value = position
         _bufferedPosition.value = if (isLive) position else exo.bufferedPosition.coerceAtLeast(0L)
         _duration.value =
@@ -3036,21 +3050,39 @@ class ExoPlaybackPlayer(
             reportPlaybackFailure(streamFailure)
         }
         maybeRecoverAudioOutput()
-        if (progressWatchdog.observe(
+        if (!offloadRequested()) offloadSleepStallTracker.reset()
+        val expectProgress =
+            shouldMonitorPlaybackProgress(
+                playWhenReady = exo.playWhenReady,
+                suppressionReason = exo.playbackSuppressionReason,
+                playbackState = exo.playbackState,
+                transitionPending = playbackTransitions.pending.value,
+                offloadRequested = offloadRequested(),
+            )
+        val playbackProgressTimedOut =
+            progressWatchdog.observe(
                 playbackInstanceId = currentInstance,
-                positionMs = position,
+                positionMs = progressPosition,
                 durationMs = _duration.value,
-                expectProgress =
-                    shouldMonitorPlaybackProgress(
-                        playWhenReady = exo.playWhenReady,
-                        suppressionReason = exo.playbackSuppressionReason,
-                        playbackState = exo.playbackState,
-                        transitionPending = playbackTransitions.pending.value,
-                        offloadRequested = offloadRequested(),
-                    ),
+                expectProgress = expectProgress,
+                nowMs = now,
+            )
+        val playbackProgressStalledMs = progressWatchdog.stalledForMs(now)
+        if (offloadRequested() &&
+            offloadSleepStallTracker.shouldDisableOffload(
+                outputPosition = silenceSupport[exo]?.playbackHeadPosition,
+                expectProgress = expectProgress,
                 nowMs = now,
             )
         ) {
+            offloadFailed = true
+            updateOffloadPreferences(exo)
+            nextPlayer?.let { updateOffloadPreferences(it) }
+            recordPlaybackState(
+                "Android audio offload disabled after playback stalled.",
+                mapOf("progressStalledMs" to playbackProgressStalledMs.toString()),
+            )
+        } else if (playbackProgressTimedOut) {
             reportPlaybackFailure(
                 PlaybackException(
                     "Playback output stopped advancing",
@@ -3717,6 +3749,12 @@ private fun buildDirectDataSourceFactory(
 ): DataSource.Factory {
     val size = if (video) resource.videoContentLengthBytes else resource.contentLengthBytes
     val url = if (video) checkNotNull(resource.videoUrl) else resource.url
+    if (url.startsWith("${LegacyAudioFile.SCHEME}:")) {
+        val path = checkNotNull(Uri.parse(url).path)
+        val manifest = checkNotNull(LegacyAudioFile.fromPath(context, path))
+        val source = LegacyAudioSource(manifest).also(onSourceOpened)
+        return DataSource.Factory { SeekableMediaDataSource(source) }
+    }
     val boundedHttp = url.startsWith("https://")
     if ((boundedHttp || resource.requireBoundedRange || resource.useRangeChunks) && size != null && size > 0L) {
         val source =
@@ -3856,7 +3894,7 @@ private fun resourceSummary(resource: PlaybackResource): String =
 
 private class SeekableMediaDataSource(
     private val source: SeekableMediaSource,
-) : BaseDataSource(true) {
+) : BaseDataSource(source !is LegacyAudioSource) {
     private var opened = false
     private var uri = android.net.Uri.EMPTY
     private var readPosition = 0L

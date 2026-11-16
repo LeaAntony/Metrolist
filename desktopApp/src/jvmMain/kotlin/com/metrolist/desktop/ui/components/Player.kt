@@ -628,7 +628,6 @@ fun StandardBottomPlayer(
                                     Modifier
                                         .fillMaxSize()
                                         .desktopPlayerArtwork(PlayerState.currentTrack?.id),
-                                extractColor = true,
                                 contentScale = if (Settings.shared.cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                             )
                             Box(
@@ -868,7 +867,6 @@ fun StandardBottomPlayer(
                                         Modifier
                                             .fillMaxSize()
                                             .desktopPlayerArtwork(PlayerState.currentTrack?.id),
-                                    extractColor = true,
                                     contentScale = if (Settings.shared.cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                                 )
                                 Box(

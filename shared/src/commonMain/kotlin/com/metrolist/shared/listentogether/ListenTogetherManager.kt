@@ -2,6 +2,9 @@ package com.metrolist.shared.listentogether
 
 import androidx.compose.runtime.snapshotFlow
 import com.metrolist.shared.BuildConfig
+import com.metrolist.shared.generated.resources.Res
+import com.metrolist.shared.generated.resources.listen_together_location_custom
+import com.metrolist.shared.generated.resources.listen_together_location_poland
 import com.metrolist.shared.listentogether.network.ApproveJoinPayload
 import com.metrolist.shared.listentogether.network.ApproveSuggestionPayload
 import com.metrolist.shared.listentogether.network.BufferCompletePayload
@@ -50,6 +53,8 @@ import com.metrolist.shared.listentogether.network.createListenTogetherMessageCo
 import com.metrolist.shared.listentogether.network.isAllowedListenTogetherServerUrl
 import com.metrolist.shared.listentogether.network.roomStateHash
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.settings.ContentUndoHints
+import com.metrolist.shared.settings.ContentUndoPage
 import com.metrolist.shared.settings.Settings
 import com.metrolist.shared.utils.ShareUrls
 import com.metrolist.shared.youtube.playback.PlaybackEventKind
@@ -794,12 +799,15 @@ class ListenTogetherManager(
     }
 
     fun blockUser(username: String) {
-        _blockedUsernames.value = ListenTogetherModeration.add(username, _blockedUsernames.value)
+        val updated = ListenTogetherModeration.add(username, _blockedUsernames.value)
+        val added = updated != _blockedUsernames.value
+        _blockedUsernames.value = updated
         Settings.shared.listenTogetherBlockedUsers = persistSet(_blockedUsernames.value)
         _pendingJoinRequests.value =
             _pendingJoinRequests.value.filterNot {
                 ListenTogetherModeration.isBlocked(it.username, _blockedUsernames.value)
             }
+        if (added) ContentUndoHints.request(ContentUndoPage.BLOCKED_USERS)
     }
 
     fun blockUser(user: UserInfo) {
@@ -2527,13 +2535,13 @@ class ListenTogetherManager(
 
     private fun buildServers(): List<ListenTogetherServer> {
         val metadata = customServerMetadata()
-        return listOf(ListenTogetherServer("The Meowery", DEFAULT_SERVER_URL, "Poland", "Nyx")) +
+        return listOf(ListenTogetherServer("The Meowery", DEFAULT_SERVER_URL, Res.string.listen_together_location_poland, "Nyx")) +
             parseSet(Settings.shared.listenTogetherCustomServers)
                 .filter(::isAllowedListenTogetherServerUrl)
                 .filterNot { it == DEFAULT_SERVER_URL }
                 .map { url ->
                     val entry = metadata[url]
-                    ListenTogetherServer(entry?.name ?: "Custom server", url, "Custom", entry?.operator ?: "User", isCustom = true)
+                    ListenTogetherServer(entry?.name, url, Res.string.listen_together_location_custom, entry?.operator, isCustom = true)
                 }
     }
 
