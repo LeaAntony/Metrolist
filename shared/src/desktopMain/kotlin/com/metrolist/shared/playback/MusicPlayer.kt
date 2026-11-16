@@ -857,10 +857,11 @@ class MusicPlayer(
             }
             return
         }
-        if (controllerClock == null) stop()
+        val song = playback.queue.displayedItems.getOrNull(playback.queue.currentIndex)
+        if (controllerClock == null) stopPlayback(replacementSong = song)
         synchronized(playerLock) {
             controllerClock = DeviceConnectControllerClock(playback)
-            _currentSong.value = playback.queue.displayedItems.getOrNull(playback.queue.currentIndex)
+            _currentSong.value = song
             _currentPosition.value = playback.positionMs
             _duration.value = playback.durationMs
             _bufferedPosition.value = playback.positionMs

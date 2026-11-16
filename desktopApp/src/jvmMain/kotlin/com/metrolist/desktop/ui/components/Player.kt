@@ -108,6 +108,8 @@ import com.metrolist.desktop.state.playback.ListenTogetherState
 import com.metrolist.desktop.state.playback.LyricsState
 import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.shared.db.MusicDatabase
+import com.metrolist.shared.deviceconnect.DeviceConnectOutputPill
+import com.metrolist.shared.deviceconnect.rememberDeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cancel
 import com.metrolist.shared.generated.resources.close
@@ -543,8 +545,10 @@ fun StandardBottomPlayer(
     toggleWindowFullscreen: () -> Unit,
 ) {
     val castState by PlayerState.castManager.state.collectAsState()
+    val deviceManagerState by DesktopDeviceConnect.manager.state.collectAsState()
     val deviceConnectState by DesktopDeviceConnect.manager.remote.state
         .collectAsState()
+    val deviceConnectSummary = rememberDeviceConnectUiSummary(deviceManagerState, deviceConnectState)
     val isListenTogetherGuest = ListenTogetherState.isListenTogetherGuest()
     val playerMenu = rememberCursorContextMenuState()
     var showSleepDialog by remember { mutableStateOf(false) }
@@ -624,7 +628,6 @@ fun StandardBottomPlayer(
                                     Modifier
                                         .fillMaxSize()
                                         .desktopPlayerArtwork(PlayerState.currentTrack?.id),
-                                extractColor = true,
                                 contentScale = if (Settings.shared.cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                             )
                             Box(
@@ -864,7 +867,6 @@ fun StandardBottomPlayer(
                                         Modifier
                                             .fillMaxSize()
                                             .desktopPlayerArtwork(PlayerState.currentTrack?.id),
-                                    extractColor = true,
                                     contentScale = if (Settings.shared.cropAlbumArt) ContentScale.Crop else ContentScale.Fit,
                                 )
                                 Box(
@@ -1098,6 +1100,7 @@ fun StandardBottomPlayer(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.End,
                     ) {
+                        val prioritizeDeviceConnect = deviceConnectSummary.hasConnectedPeer || deviceConnectSummary.isActive
                         PlayerConnectedButtonGroup(
                             onQueueClick = UiState::togglePersistentPlayerDrawer,
                             onLyricsClick = {
@@ -1105,7 +1108,7 @@ fun StandardBottomPlayer(
                             },
                             isLyricsActive = UiState.showLyricsDrawer,
                             isQueueActive = UiState.showPersistentPlayerDrawer,
-                            modifier = Modifier.widthIn(max = 300.dp),
+                            modifier = Modifier.widthIn(max = if (prioritizeDeviceConnect) 348.dp else 300.dp),
                             compact = true,
                             volume = PlayerState.volume,
                             onVolumeChange = { PlayerState.setVolumeLevel(it) },
@@ -1133,9 +1136,32 @@ fun StandardBottomPlayer(
                             isCasting = castState.isConnected,
                             onDeviceConnectClick = UiState::toggleDeviceConnectPanel,
                             isDeviceConnectActive =
-                                UiState.showDeviceConnectPanel || deviceConnectState.sessionId != null,
+                                UiState.showDeviceConnectPanel || deviceConnectSummary.isActive,
+                            prioritizeDeviceConnect = prioritizeDeviceConnect,
                         )
                     }
+                }
+            }
+            AnimatedVisibility(
+                visible =
+                    (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                        deviceConnectSummary.activeDeviceName.isNotBlank(),
+            ) {
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .padding(bottom = 8.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    DeviceConnectOutputPill(
+                        deviceName = deviceConnectSummary.activeDeviceName,
+                        deviceType = deviceConnectSummary.activeDeviceType,
+                        isTransferring = deviceConnectSummary.isTransferring,
+                        isRemote = deviceConnectSummary.isFollowing,
+                        onClick = UiState::toggleDeviceConnectPanel,
+                    )
                 }
             }
         }

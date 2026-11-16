@@ -18,10 +18,14 @@ fun DesktopCastDialog(onDismiss: () -> Unit) {
     val deviceState by manager.state.collectAsState()
     val syncState by manager.remote.state.collectAsState()
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { manager.refreshPairingState() }
+    LaunchedEffect(Unit) {
+        manager.refreshPairingState()
+        manager.remote.discoverPlayback()
+    }
     CastDeviceDialog(
         deviceState = deviceState,
         syncState = syncState,
+        isPlaying = if (state.isConnected) state.isPlaying else PlayerState.isPlaying,
         onEnableDeviceConnect = { scope.launch { manager.enable(Unit) } },
         onTransferTo = manager.remote::transferTo,
         devices = devices,

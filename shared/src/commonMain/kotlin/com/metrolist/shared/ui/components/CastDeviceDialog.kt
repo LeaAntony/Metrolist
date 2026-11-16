@@ -39,13 +39,15 @@ fun CastDeviceDialog(
     onDisconnect: () -> Unit,
     deviceState: DeviceConnectManager.State? = null,
     syncState: DcSyncState = DcSyncState(),
+    isPlaying: Boolean = true,
     onEnableDeviceConnect: (() -> Unit)? = null,
     onTransferTo: (String) -> Unit = {},
 ) {
-    if (!Settings.shared.castEnabled) return
-    DisposableEffect(Unit) {
-        onStartDiscovery()
-        onDispose(onStopDiscovery)
+    val castEnabled = Settings.shared.castEnabled
+    if (!castEnabled && deviceState == null) return
+    DisposableEffect(castEnabled) {
+        if (castEnabled) onStartDiscovery()
+        onDispose { if (castEnabled) onStopDiscovery() }
     }
     BasicAlertDialog(
         onDismissRequest = onDismiss,
@@ -64,6 +66,7 @@ fun CastDeviceDialog(
                 onClose = onDismiss,
                 deviceState = deviceState,
                 syncState = syncState,
+                isPlaying = isPlaying,
                 onEnableDeviceConnect = onEnableDeviceConnect,
                 onTransferTo = onTransferTo,
                 modifier = Modifier.heightIn(max = 640.dp),

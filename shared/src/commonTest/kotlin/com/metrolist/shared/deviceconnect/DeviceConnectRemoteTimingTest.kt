@@ -12,6 +12,7 @@ import kotlinx.coroutines.withTimeout
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -322,6 +323,98 @@ class DeviceConnectRemoteTimingTest {
                 advanceTimeBy(8_001L)
                 runCurrent()
                 assertEquals(9_000L, port.state.positionMs)
+                assertTrue(remote.isFollowing)
+            } finally {
+                remote.close()
+            }
+        }
+
+    @Test
+    fun transferringToIdTracksInFlightPushAndPullUntilConfirmed() =
+        runTest {
+            val initialPlayback = snapshot().playback
+            val port = DelayedPlaybackPort {}.apply { state = initialPlayback }
+            val remote =
+                DeviceConnectRemote(
+                    this,
+                    { "controller" },
+                    { _, _ -> true },
+                    monotonicClockMs = { testScheduler.currentTime + 1L },
+                )
+            try {
+                remote.attach(port)
+                remote.onPeerConnected("target", supportsPlaybackClock = true)
+                runCurrent()
+
+                remote.transferTo("target")
+                runCurrent()
+                assertEquals("target", remote.state.value.transferringToId)
+                val sessionId = requireNotNull(remote.state.value.sessionId)
+
+                val confirmed = snapshot().copy(sessionId = sessionId, revision = 2L)
+                remote.onMessage("target", DcSyncMessage(DcSyncMessageType.STATE, sessionId = sessionId, snapshot = confirmed))
+                runCurrent()
+                assertNull(remote.state.value.transferringToId)
+                assertEquals("target", remote.state.value.targetId)
+
+                remote.transferTo("controller")
+                runCurrent()
+                assertEquals("controller", remote.state.value.transferringToId)
+
+                remote.onMessage("target", DcSyncMessage(DcSyncMessageType.TRANSFER, sessionId = sessionId, snapshot = confirmed))
+                runCurrent()
+                assertNull(remote.state.value.transferringToId)
+                assertFalse(remote.isActive)
+            } finally {
+                remote.close()
+            }
+        }
+
+    @Test
+    fun transferringToIdClearsOnPullTimeoutAndRepeatedActiveTargetIsANoOp() =
+        runTest {
+            val sent = mutableListOf<DcSyncMessage>()
+            val port = DelayedPlaybackPort { error("A timed-out pull must not load media") }
+            val remote =
+                DeviceConnectRemote(
+                    this,
+                    { "controller" },
+                    { _, message ->
+                        sent += message
+                        true
+                    },
+                    transferTimeoutMs = 3_000L,
+                    monotonicClockMs = { testScheduler.currentTime + 1L },
+                )
+            try {
+                remote.attach(port)
+                remote.onPeerConnected("target", supportsPlaybackClock = true)
+                remote.onMessage("target", DcSyncMessage(DcSyncMessageType.STATE, snapshot = snapshot()))
+                runCurrent()
+
+                sent.clear()
+                remote.transferTo("target")
+                runCurrent()
+                assertTrue(sent.isEmpty())
+                assertNull(remote.state.value.transferringToId)
+
+                remote.transferTo("controller")
+                runCurrent()
+                assertEquals("controller", remote.state.value.transferringToId)
+                assertEquals(1, sent.count { it.type == DcSyncMessageType.PULL })
+
+                remote.transferTo("target")
+                runCurrent()
+                assertNull(remote.state.value.transferringToId)
+                assertTrue(remote.isFollowing)
+
+                remote.transferTo("controller")
+                runCurrent()
+                assertEquals("controller", remote.state.value.transferringToId)
+                advanceTimeBy(3_001L)
+                runCurrent()
+                assertNull(remote.state.value.transferringToId)
+                assertEquals(DcSyncError.UNAVAILABLE, remote.state.value.error)
                 assertTrue(remote.isFollowing)
             } finally {
                 remote.close()

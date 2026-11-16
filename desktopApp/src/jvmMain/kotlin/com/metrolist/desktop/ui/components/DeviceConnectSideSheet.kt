@@ -189,6 +189,7 @@ private fun DeviceConnectPanelSurface(
 
     LaunchedEffect(Unit) {
         manager.refreshPairingState()
+        manager.remote.discoverPlayback()
     }
 
     Surface(
@@ -210,6 +211,7 @@ private fun DeviceConnectPanelSurface(
             onDisconnectCast = PlayerState::disconnectCast,
             deviceState = state,
             syncState = syncState,
+            isPlaying = if (castState.isConnected) castState.isPlaying else PlayerState.isPlaying,
             onEnableDeviceConnect = { scope.launch { manager.enable(Unit) } },
             onTransferTo = manager.remote::transferTo,
             onClose = { UiState.showDeviceConnectPanel = false },

@@ -95,6 +95,8 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.metrolist.shared.api.lyrics.LyricsUtils
+import com.metrolist.shared.deviceconnect.DeviceConnectOutputPill
+import com.metrolist.shared.deviceconnect.DeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.album_art
 import com.metrolist.shared.generated.resources.close
@@ -157,8 +159,12 @@ fun FullscreenPlayerContent(
     onShowSleepTimer: () -> Unit,
     onOpenCast: () -> Unit,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     canControlPlayback: Boolean,
     backHandlerEnabled: Boolean = true,
+    onOpenDeviceConnect: () -> Unit = onOpenCast,
+    isDeviceConnectActive: Boolean = false,
+    deviceConnectSummary: DeviceConnectUiSummary = DeviceConnectUiSummary(),
 ) {
     var controlsVisible by remember { mutableStateOf(true) }
     var subtitleOffset by remember { mutableStateOf(IntOffset.Zero) }
@@ -283,6 +289,9 @@ fun FullscreenPlayerContent(
                         visible = controlsVisible,
                         onVisibilityChange = { controlsVisible = it },
                         viewModel = viewModel,
+                        onOpenDeviceConnect = onOpenDeviceConnect,
+                        isDeviceConnectActive = isDeviceConnectActive,
+                        deviceConnectSummary = deviceConnectSummary,
                     )
                 }
                 if (uiState.isSubtitleActive && !uiState.isLyricsVisible) {
@@ -291,6 +300,7 @@ fun FullscreenPlayerContent(
                         currentPositionFlow = viewModel.currentPosition,
                         isPlaying = isPlaying,
                         isCasting = isCasting,
+                        isBuffering = isBuffering,
                         offset = subtitleOffset,
                         onOffsetChange = { subtitleOffset = it },
                     )
@@ -325,6 +335,7 @@ fun FullscreenPlayerContent(
                                     isLoading = uiState.isLyricsLoading,
                                     textColor = Color.White,
                                     isCasting = isCasting,
+                                    isBuffering = isBuffering,
                                 )
                             }
                         } else if (uiState.isQueueVisible || queueClosing) {
@@ -371,10 +382,14 @@ private fun FullscreenControlsOverlay(
     onToggleSubtitle: () -> Unit,
     onOpenCast: () -> Unit,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     canControlPlayback: Boolean,
     visible: Boolean,
     onVisibilityChange: (Boolean) -> Unit,
     viewModel: PlayerViewModel,
+    onOpenDeviceConnect: () -> Unit = onOpenCast,
+    isDeviceConnectActive: Boolean = false,
+    deviceConnectSummary: DeviceConnectUiSummary = DeviceConnectUiSummary(),
 ) {
     val sleepTimerState by LocalPlayerSession.current?.sleepTimerState?.collectWhilePlayerActive()
         ?: remember { mutableStateOf(SleepTimerState()) }
@@ -572,6 +587,23 @@ private fun FullscreenControlsOverlay(
                         }
                     }
 
+                    AnimatedVisibility(
+                        visible =
+                            (deviceConnectSummary.isFollowing || deviceConnectSummary.isTransferring) &&
+                                deviceConnectSummary.activeDeviceName.isNotBlank(),
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    ) {
+                        DeviceConnectOutputPill(
+                            deviceName = deviceConnectSummary.activeDeviceName,
+                            deviceType = deviceConnectSummary.activeDeviceType,
+                            isTransferring = deviceConnectSummary.isTransferring,
+                            isRemote = deviceConnectSummary.isFollowing,
+                            onClick = onOpenDeviceConnect,
+                        )
+                    }
+
                     PlayerProgressSlider(
                         viewModel = viewModel,
                         duration = duration,
@@ -628,8 +660,25 @@ private fun FullscreenControlsOverlay(
                                 sleepTimerContentDescription = sleepTimerContentDescription(sleepTimerState),
                                 onSubtitleClick = onToggleSubtitle,
                                 isSubtitleActive = uiState.isSubtitleActive,
-                                onCastClick = onOpenCast.takeIf { canControlPlayback },
+                                onCastClick =
+                                    if (Settings.shared.castEnabled && !isDeviceConnectActive) {
+                                        onOpenCast.takeIf { canControlPlayback }
+                                    } else {
+                                        null
+                                    },
                                 isCasting = isCasting,
+                                onDeviceConnectClick =
+                                    if (
+                                        isDeviceConnectActive ||
+                                        deviceConnectSummary.enabled ||
+                                        !Settings.shared.castEnabled ||
+                                        LocalIsTv.current
+                                    ) {
+                                        onOpenDeviceConnect.takeIf { canControlPlayback }
+                                    } else {
+                                        null
+                                    },
+                                isDeviceConnectActive = isDeviceConnectActive,
                                 touchTarget = 40.dp,
                             )
                         }
@@ -659,6 +708,7 @@ private fun SubtitleOverlay(
     currentPositionFlow: StateFlow<Long>,
     isPlaying: Boolean,
     isCasting: Boolean,
+    isBuffering: Boolean = false,
     offset: IntOffset,
     onOffsetChange: (IntOffset) -> Unit,
 ) {
@@ -683,6 +733,7 @@ private fun SubtitleOverlay(
             songId = uiState.currentSong?.id,
             timingOffsetMs = lyricsOffsetMs,
             isCasting = isCasting,
+            isBuffering = isBuffering,
             finalLineDurationMs = LyricsUtils.FINAL_DYNAMIC_LINE_DURATION_MS,
         )
 

@@ -9,6 +9,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.unit.Dp
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.YouTubeCanvasClip
+import com.metrolist.shared.deviceconnect.DeviceConnectUiSummary
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.viewmodels.PlayerViewModel
 import com.metrolist.shared.youtube.playback.PlaybackResource
@@ -39,6 +40,9 @@ interface PlayerPlatform {
     fun isDeviceConnectActive(): Boolean
 
     @Composable
+    fun deviceConnectSummary(): DeviceConnectUiSummary = DeviceConnectUiSummary()
+
+    @Composable
     fun isTouchExplorationEnabled(): Boolean
 
     @Composable
@@ -51,6 +55,7 @@ interface PlayerPlatform {
     fun PlayerWindowEffects(
         hideSystemBars: Boolean,
         lockLandscape: Boolean,
+        lightStatusBars: Boolean?,
     )
 
     fun enterPictureInPicture(

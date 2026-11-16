@@ -32,5 +32,6 @@ internal fun rememberDeviceConnectSettingsHost(): DeviceConnectSettingsHost {
         onPair = manager::pair,
         onCancelPairing = manager::rejectPairing,
         onForget = { id -> scope.launch { manager.forget(id) } },
+        onTransferTo = manager.remote::transferTo,
     )
 }

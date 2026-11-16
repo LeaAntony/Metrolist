@@ -40,6 +40,7 @@ data class DeviceConnectSettingsHost(
     val onPair: (String) -> Unit,
     val onCancelPairing: (String) -> Unit,
     val onForget: (String) -> Unit,
+    val onTransferTo: (String) -> Unit = {},
 )
 
 @Composable
@@ -52,6 +53,16 @@ internal fun SettingsUiRegistryBuilder.deviceConnectPage(host: DeviceConnectSett
     val pairedIds = state.pairedDevices.mapTo(mutableSetOf()) { it.deviceId }
     val visiblePeerIds = state.peers.mapTo(mutableSetOf()) { it.id }
     val offlinePairedDevices = state.pairedDevices.filterNot { it.deviceId in visiblePeerIds }
+    val localDeviceId = state.localDeviceId.takeIf { it.isNotBlank() }
+    val isFollowing = playbackState.sessionId != null && playbackState.targetId != null && playbackState.targetId != localDeviceId
+    val transferringToId = playbackState.transferringToId
+    val connectedPeers = state.peers.filter { it.state == DeviceConnectManager.PeerState.CONNECTED }
+    val transferringTargetName =
+        when {
+            transferringToId == null -> null
+            transferringToId == localDeviceId -> stringResource(Res.string.device_connect_this_device_label)
+            else -> connectedPeers.firstOrNull { it.id == transferringToId }?.name
+        }
 
     page(
         id = SettingsPageId.DEVICE_CONNECT,
@@ -78,12 +89,27 @@ internal fun SettingsUiRegistryBuilder.deviceConnectPage(host: DeviceConnectSett
                 placeholder = stringResource(Res.string.device_connect_name_hint),
             ) { host.onUpdateName(it.trim()) }
             if (state.serverRunning) {
+                val localMetadata = deviceConnectDeviceMetadata(state.localDeviceType)
+                val isTransferringHere = transferringToId != null && transferringToId == localDeviceId
                 action(
                     id = "deviceConnectThisDevice",
                     title = stringResource(Res.string.device_connect_this_device_label),
-                    description = deviceConnectDeviceMetadata(state.localDeviceType),
-                    enabled = false,
-                ) {}
+                    description =
+                        if (!isFollowing) {
+                            stringResource(Res.string.device_connect_active_output_summary, localMetadata)
+                        } else {
+                            localMetadata
+                        },
+                    valueLabel =
+                        when {
+                            isTransferringHere -> stringResource(Res.string.device_connect_transferring)
+                            isFollowing -> stringResource(Res.string.device_connect_switch_here)
+                            else -> null
+                        },
+                    enabled = isFollowing && !isTransferringHere && localDeviceId != null,
+                ) {
+                    if (localDeviceId != null) host.onTransferTo(localDeviceId)
+                }
             }
             if (host.permissionRequired) {
                 action(
@@ -107,9 +133,16 @@ internal fun SettingsUiRegistryBuilder.deviceConnectPage(host: DeviceConnectSett
                 enabled = state.serverRunning,
                 onClick = host.onRescan,
             )
-            if (playbackState.error != null || (playbackState.sessionId != null && !playbackState.playbackAvailable)) {
+            if (
+                playbackState.error != null ||
+                playbackState.transferringToId != null ||
+                (playbackState.sessionId != null && !playbackState.playbackAvailable) ||
+                playbackState.controllerIds.isNotEmpty()
+            ) {
                 custom("deviceConnectPlaybackStatus", stringResource(Res.string.device_connect_title)) {
-                    Column(Modifier.padding(16.dp)) { DeviceConnectPlaybackStatus(playbackState) }
+                    Column(Modifier.padding(16.dp)) {
+                        DeviceConnectPlaybackStatus(playbackState, targetName = transferringTargetName)
+                    }
                 }
             }
             if (state.peers.isEmpty() && offlinePairedDevices.isEmpty() && !state.serverFailed && !state.discoveryFailed) {
@@ -152,6 +185,27 @@ internal fun SettingsUiRegistryBuilder.deviceConnectPage(host: DeviceConnectSett
                     confirmationMessage = if (paired) stringResource(Res.string.device_connect_forget_message) else null,
                 ) {
                     if (paired) host.onForget(peer.id) else host.onPair(peer.id)
+                }
+                if (state.serverRunning && peer.state == DeviceConnectManager.PeerState.CONNECTED) {
+                    val peerName = peer.name.ifBlank { peer.id }
+                    val isCurrentOutput = playbackState.sessionId != null && playbackState.targetId == peer.id
+                    val isTransferringHere = transferringToId == peer.id
+                    action(
+                        id = "deviceConnectSwitchOutput:${peer.id}",
+                        title =
+                            when {
+                                isTransferringHere -> stringResource(Res.string.device_connect_transferring_to, peerName)
+                                isCurrentOutput -> stringResource(Res.string.device_connect_playing_on, peerName)
+                                else -> stringResource(Res.string.device_connect_switch_to_peer, peerName)
+                            },
+                        description =
+                            if (!isCurrentOutput && !isTransferringHere) {
+                                stringResource(Res.string.device_connect_tap_to_switch)
+                            } else {
+                                deviceConnectDeviceMetadata(peer.deviceType, peer.model)
+                            },
+                        enabled = !isCurrentOutput && !isTransferringHere,
+                    ) { host.onTransferTo(peer.id) }
                 }
                 if (pairingRequest != null) {
                     action(

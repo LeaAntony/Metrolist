@@ -78,6 +78,7 @@ actual fun PlayerConnectedButtonGroup(
     isCasting: Boolean,
     onDeviceConnectClick: (() -> Unit)?,
     isDeviceConnectActive: Boolean,
+    prioritizeDeviceConnect: Boolean,
     touchTarget: Dp,
     sectioned: Boolean,
 ) {

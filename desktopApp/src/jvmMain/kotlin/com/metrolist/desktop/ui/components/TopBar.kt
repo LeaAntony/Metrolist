@@ -637,7 +637,9 @@ fun WindowScope.TopBarWithPlayer(
                             }
 
                             val isDeviceConnectActive =
-                                UiState.showDeviceConnectPanel || deviceConnectState.sessionId != null
+                                UiState.showDeviceConnectPanel ||
+                                    deviceConnectState.sessionId != null ||
+                                    deviceConnectState.transferringToId != null
                             IconButton(
                                 onClick = UiState::toggleDeviceConnectPanel,
                                 modifier = Modifier.size(40.dp),
@@ -729,7 +731,7 @@ fun WindowScope.TopBarWithPlayer(
                 titlebarContent2()
             }
         }
-    } else if (OsUtil.isLinux && !Settings.shared.enableSystemWindowFrame) {
+    } else if (OsUtil.isLinux) {
         WindowDragHandle(
             isMaximized = UiState.isMaximized,
             onRestoreFromMaximized = onMaximized,

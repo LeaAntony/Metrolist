@@ -43,6 +43,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.metrolist.shared.cast.CastConnectionStatus
 import com.metrolist.shared.cast.CastDevice
@@ -50,18 +51,26 @@ import com.metrolist.shared.cast.CastState
 import com.metrolist.shared.deviceconnect.DcSyncState
 import com.metrolist.shared.deviceconnect.DeviceConnectManager
 import com.metrolist.shared.deviceconnect.DeviceConnectPlaybackStatus
+import com.metrolist.shared.deviceconnect.deviceConnectDeviceIcon
+import com.metrolist.shared.deviceconnect.deviceConnectDeviceMetadata
+import com.metrolist.shared.deviceconnect.localDisplayName
 import com.metrolist.shared.generated.resources.Res
-import com.metrolist.shared.generated.resources.app_name
 import com.metrolist.shared.generated.resources.available_devices
 import com.metrolist.shared.generated.resources.close
 import com.metrolist.shared.generated.resources.connected_devices
+import com.metrolist.shared.generated.resources.device_connect_active_output_summary
+import com.metrolist.shared.generated.resources.device_connect_current_output
 import com.metrolist.shared.generated.resources.device_connect_default_device
 import com.metrolist.shared.generated.resources.device_connect_default_device_description
 import com.metrolist.shared.generated.resources.device_connect_enable
 import com.metrolist.shared.generated.resources.device_connect_grant_permission
+import com.metrolist.shared.generated.resources.device_connect_open_settings
 import com.metrolist.shared.generated.resources.device_connect_pair_hint
+import com.metrolist.shared.generated.resources.device_connect_switch_output
+import com.metrolist.shared.generated.resources.device_connect_tap_to_switch
+import com.metrolist.shared.generated.resources.device_connect_this_device_label
+import com.metrolist.shared.generated.resources.device_connect_transferring
 import com.metrolist.shared.generated.resources.disconnect_cast
-import com.metrolist.shared.generated.resources.listen_together_connected
 import com.metrolist.shared.generated.resources.no_compatible_devices
 import com.metrolist.shared.generated.resources.no_device_connected
 import com.metrolist.shared.generated.resources.no_device_found
@@ -84,19 +93,36 @@ fun ConnectedDevicesContent(
     modifier: Modifier = Modifier,
     deviceState: DeviceConnectManager.State? = null,
     syncState: DcSyncState = DcSyncState(),
+    isPlaying: Boolean = true,
     onEnableDeviceConnect: (() -> Unit)? = null,
     onTransferTo: (String) -> Unit = {},
     permissionRequired: Boolean = false,
     onOpenIntegrations: (() -> Unit)? = null,
     closeButtonModifier: Modifier = Modifier,
 ) {
-    val activeCast = castState.device.takeIf { Settings.shared.castEnabled && castState.status != CastConnectionStatus.DISCONNECTED }
-    val availableCast = devices.filter { Settings.shared.castEnabled && it.id != activeCast?.id }
+    val castEnabled = Settings.shared.castEnabled
+    val activeCast = castState.device.takeIf { castEnabled && castState.status != CastConnectionStatus.DISCONNECTED }
+    val availableCast = devices.filter { castEnabled && it.id != activeCast?.id }
     val peers = deviceState?.peers.orEmpty().filter { it.state == DeviceConnectManager.PeerState.CONNECTED }
-    val activePeer = peers.firstOrNull { it.id == syncState.targetId && it.id != deviceState?.localDeviceId }
+    val localDeviceId = deviceState?.localDeviceId?.takeIf { it.isNotBlank() }
+    val isFollowingPeer = syncState.sessionId != null && syncState.targetId != null && syncState.targetId != localDeviceId
+    val activePeer = if (isFollowingPeer) peers.firstOrNull { it.id == syncState.targetId } else null
     val availablePeers = peers.filterNot { it.id == activePeer?.id }
-    val empty = activeCast == null && activePeer == null && availableCast.isEmpty() && availablePeers.isEmpty()
+    val showThisDeviceAsCurrent = deviceState != null && activeCast == null && !isFollowingPeer && localDeviceId != null
+    val canSwitchToThisDevice = isFollowingPeer && localDeviceId != null
+    val empty =
+        activeCast == null && activePeer == null && !showThisDeviceAsCurrent &&
+            availableCast.isEmpty() && availablePeers.isEmpty()
     val connectingLabel = stringResource(Res.string.scrobble_connecting)
+    val thisDeviceFallback = stringResource(Res.string.device_connect_this_device_label)
+    val localDisplayName = deviceState.localDisplayName(thisDeviceFallback)
+    val transferringToId = syncState.transferringToId
+    val transferringTargetName =
+        when {
+            transferringToId == null -> null
+            transferringToId == localDeviceId -> localDisplayName
+            else -> peers.firstOrNull { it.id == transferringToId }?.name
+        }
     Column(
         modifier.fillMaxWidth().verticalScrollWithDrag(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -135,75 +161,125 @@ fun ConnectedDevicesContent(
                 )
             }
         } else {
-            DeviceSectionTitle(stringResource(Res.string.listen_together_connected))
-            if (activeCast == null && activePeer == null) {
+            DeviceSectionTitle(stringResource(Res.string.device_connect_current_output))
+            if (activeCast == null && activePeer == null && !showThisDeviceAsCurrent) {
                 EmptyDeviceSection(stringResource(Res.string.no_device_connected))
             } else {
-                val count = (if (activeCast != null) 1 else 0) + (if (activePeer != null) 1 else 0)
+                val activeCount =
+                    (if (activeCast != null) 1 else 0) +
+                        (if (activePeer != null) 1 else 0) +
+                        (if (showThisDeviceAsCurrent) 1 else 0)
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    var activeIndex = 0
                     activeCast?.let { device ->
                         ConnectedDeviceRow(
                             name = device.name,
                             subtitle =
-                                if (castState.status ==
-                                    CastConnectionStatus.CONNECTING
-                                ) {
+                                if (castState.status == CastConnectionStatus.CONNECTING) {
                                     connectingLabel
                                 } else {
                                     protocolName(device.protocol)
                                 },
                             icon = MetrolistIcons.Outlined.Cast,
-                            index = 0,
-                            count = count,
+                            index = activeIndex++,
+                            count = activeCount,
                             onClick = onDisconnectCast,
-                            connected = true,
+                            active = true,
+                            showDisconnectAction = true,
                             connecting = castState.status == CastConnectionStatus.CONNECTING,
                         )
                     }
                     activePeer?.let { peer ->
                         ConnectedDeviceRow(
-                            name = peer.name,
-                            subtitle = stringResource(Res.string.app_name),
-                            icon = MetrolistIcons.Outlined.Devices,
-                            index = count - 1,
-                            count = count,
-                            connected = true,
-                            onClick = { deviceState?.localDeviceId?.let(onTransferTo) },
+                            name = peer.name.ifBlank { peer.id },
+                            subtitle = deviceConnectDeviceMetadata(peer.deviceType, peer.model),
+                            icon = deviceConnectDeviceIcon(peer.deviceType),
+                            index = activeIndex++,
+                            count = activeCount,
+                            onClick = null,
+                            active = true,
+                            isPlaying = isPlaying,
+                            connecting = transferringToId == peer.id,
+                        )
+                    }
+                    if (showThisDeviceAsCurrent) {
+                        val localMetadata = deviceConnectDeviceMetadata(deviceState.localDeviceType)
+                        ConnectedDeviceRow(
+                            name = localDisplayName,
+                            subtitle = stringResource(Res.string.device_connect_active_output_summary, localMetadata),
+                            icon = deviceConnectDeviceIcon(deviceState.localDeviceType),
+                            index = activeIndex,
+                            count = activeCount,
+                            onClick = null,
+                            active = true,
+                            isPlaying = isPlaying,
+                            connecting = transferringToId == localDeviceId,
                         )
                     }
                 }
             }
-            DeviceSectionTitle(stringResource(Res.string.available_devices))
-            if (availableCast.isEmpty() && availablePeers.isEmpty()) {
-                Text(
-                    stringResource(Res.string.no_other_devices_nearby),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                )
+            val switchTitle =
+                if (deviceState != null) Res.string.device_connect_switch_output else Res.string.available_devices
+            DeviceSectionTitle(stringResource(switchTitle))
+            val switchCount =
+                (if (canSwitchToThisDevice) 1 else 0) + availableCast.size + availablePeers.size
+            if (switchCount == 0) {
+                EmptyDeviceSection(stringResource(Res.string.no_other_devices_nearby))
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    val count = availableCast.size + availablePeers.size
-                    availableCast.forEachIndexed { index, device ->
+                    var switchIndex = 0
+                    if (localDeviceId != null && isFollowingPeer) {
+                        val isTransferringHere = transferringToId == localDeviceId
                         ConnectedDeviceRow(
-                            device.name,
-                            protocolName(device.protocol),
-                            MetrolistIcons.Outlined.Cast,
-                            index,
-                            count,
-                            enabled = castState.status != CastConnectionStatus.CONNECTING,
-                            onClick = { onDeviceClick(device) },
+                            name = localDisplayName,
+                            subtitle =
+                                stringResource(
+                                    if (isTransferringHere) {
+                                        Res.string.device_connect_transferring
+                                    } else {
+                                        Res.string.device_connect_tap_to_switch
+                                    },
+                                ),
+                            icon = deviceConnectDeviceIcon(deviceState.localDeviceType),
+                            index = switchIndex++,
+                            count = switchCount,
+                            onClick = { onTransferTo(localDeviceId) },
+                            connecting = isTransferringHere,
+                            showSwitchAffordance = !isTransferringHere,
+                            enabled = transferringToId == null,
                         )
                     }
-                    availablePeers.forEachIndexed { index, peer ->
+                    availablePeers.forEach { peer ->
+                        val isTransferringHere = transferringToId == peer.id
                         ConnectedDeviceRow(
-                            peer.name,
-                            stringResource(Res.string.app_name),
-                            MetrolistIcons.Outlined.Devices,
-                            index + availableCast.size,
-                            count,
-                            enabled = !castState.isConnected && castState.status != CastConnectionStatus.CONNECTING,
+                            name = peer.name.ifBlank { peer.id },
+                            subtitle =
+                                if (isTransferringHere) {
+                                    stringResource(Res.string.device_connect_transferring)
+                                } else {
+                                    deviceConnectDeviceMetadata(peer.deviceType, peer.model)
+                                },
+                            icon = deviceConnectDeviceIcon(peer.deviceType),
+                            index = switchIndex++,
+                            count = switchCount,
                             onClick = { onTransferTo(peer.id) },
+                            connecting = isTransferringHere,
+                            showSwitchAffordance = !isTransferringHere,
+                            enabled =
+                                !castState.isConnected &&
+                                    castState.status != CastConnectionStatus.CONNECTING &&
+                                    transferringToId != peer.id,
+                        )
+                    }
+                    availableCast.forEach { device ->
+                        ConnectedDeviceRow(
+                            name = device.name,
+                            subtitle = protocolName(device.protocol),
+                            icon = MetrolistIcons.Outlined.Cast,
+                            index = switchIndex++,
+                            count = switchCount,
+                            onClick = { onDeviceClick(device) },
+                            enabled = castState.status != CastConnectionStatus.CONNECTING,
                         )
                     }
                 }
@@ -211,9 +287,16 @@ fun ConnectedDevicesContent(
         }
         castState.error
             ?.takeIf {
-                Settings.shared.castEnabled
+                castEnabled
             }?.let { Text(stringResource(it.stringResource), color = MaterialTheme.colorScheme.error) }
-        if (syncState.error != null || syncState.controllerIds.isNotEmpty()) DeviceConnectPlaybackStatus(syncState)
+        if (
+            syncState.error != null ||
+            syncState.transferringToId != null ||
+            (syncState.sessionId != null && !syncState.playbackAvailable) ||
+            syncState.controllerIds.isNotEmpty()
+        ) {
+            DeviceConnectPlaybackStatus(syncState, targetName = transferringTargetName)
+        }
         if (deviceState != null) {
             val pairedDevices = deviceState.pairedDevices
             if (pairedDevices.isNotEmpty()) {
@@ -258,17 +341,23 @@ fun ConnectedDevicesContent(
                     )
                 }
             }
-            Text(
-                stringResource(Res.string.device_connect_pair_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (onOpenIntegrations != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .then(onOpenIntegrations?.let { Modifier.clickable(role = Role.Button, onClick = it) } ?: Modifier)
-                        .padding(vertical = 4.dp),
-            )
+            if (onOpenIntegrations != null) {
+                TextButton(
+                    onClick = onOpenIntegrations,
+                    modifier = Modifier.fillMaxWidth(),
+                    shapes = ButtonDefaults.shapes(),
+                ) {
+                    Text(stringResource(Res.string.device_connect_open_settings))
+                }
+            } else {
+                Text(
+                    stringResource(Res.string.device_connect_pair_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                )
+            }
         }
         Spacer(Modifier.height(8.dp))
     }
@@ -325,44 +414,106 @@ private fun ConnectedDeviceRow(
     icon: ImageVector,
     index: Int,
     count: Int,
-    onClick: () -> Unit,
-    connected: Boolean = false,
+    onClick: (() -> Unit)?,
+    active: Boolean = false,
+    isPlaying: Boolean = true,
+    showDisconnectAction: Boolean = false,
+    showSwitchAffordance: Boolean = false,
     connecting: Boolean = false,
     enabled: Boolean = true,
 ) {
-    Surface(
-        onClick = onClick,
-        enabled = enabled,
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        shape =
-            RoundedCornerShape(
-                topStart = if (index == 0) 20.dp else 5.dp,
-                topEnd = if (index == 0) 20.dp else 5.dp,
-                bottomStart = if (index == count - 1) 20.dp else 5.dp,
-                bottomEnd = if (index == count - 1) 20.dp else 5.dp,
-            ),
-    ) {
+    val shape =
+        RoundedCornerShape(
+            topStart = if (index == 0) 20.dp else 5.dp,
+            topEnd = if (index == 0) 20.dp else 5.dp,
+            bottomStart = if (index == count - 1) 20.dp else 5.dp,
+            bottomEnd = if (index == count - 1) 20.dp else 5.dp,
+        )
+    val containerColor =
+        if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest
+    val contentColor =
+        if (active) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val subtitleColor =
+        if (active) {
+            MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        }
+    val badgeColor =
+        if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondaryContainer
+    val badgeTint =
+        if (active) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSecondaryContainer
+
+    val rowContent: @Composable () -> Unit = {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Box(
-                Modifier.size(40.dp).background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
+                Modifier.size(40.dp).background(badgeColor, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, null, tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Icon(icon, null, tint = badgeTint)
             }
             Column(Modifier.weight(1f)) {
-                Text(name, style = MaterialTheme.typography.titleMedium)
-                Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    name,
+                    style = MaterialTheme.typography.titleMedium,
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = subtitleColor,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-            if (connecting) LoadingIndicator(Modifier.size(20.dp))
-            if (connected) {
+            if (connecting) {
+                LoadingIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = if (active) contentColor else MaterialTheme.colorScheme.primary,
+                )
+            } else if (showDisconnectAction && onClick != null) {
                 IconButton(onClick = onClick, shapes = IconButtonDefaults.shapes()) {
-                    Icon(MetrolistIcons.Outlined.Close, stringResource(Res.string.disconnect_cast))
+                    Icon(MetrolistIcons.Outlined.Close, stringResource(Res.string.disconnect_cast), tint = contentColor)
                 }
+            } else if (active) {
+                NowPlayingBars(
+                    isPlaying = isPlaying,
+                    color = contentColor,
+                    modifier = Modifier.size(22.dp),
+                )
+            } else if (showSwitchAffordance) {
+                Icon(
+                    MetrolistIcons.Filled.PlayArrow,
+                    null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp),
+                )
             }
+        }
+    }
+    if (onClick != null) {
+        Surface(
+            onClick = onClick,
+            enabled = enabled,
+            color = containerColor,
+            contentColor = contentColor,
+            shape = shape,
+        ) {
+            rowContent()
+        }
+    } else {
+        Surface(
+            color = containerColor,
+            contentColor = contentColor,
+            shape = shape,
+        ) {
+            rowContent()
         }
     }
 }

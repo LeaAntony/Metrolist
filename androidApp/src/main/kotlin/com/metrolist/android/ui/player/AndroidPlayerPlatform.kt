@@ -34,6 +34,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.datasource.ByteArrayDataSource
 import androidx.media3.datasource.DataSource
@@ -46,12 +47,15 @@ import com.metrolist.android.playback.SongDownloadManager
 import com.metrolist.android.ui.component.AdaptiveModalBottomSheet
 import com.metrolist.android.ui.download.rememberDownloadPermissionGate
 import com.metrolist.android.ui.screens.PlayerDeviceConnectSheet
+import com.metrolist.android.ui.theme.SystemBarAppearance
 import com.metrolist.android.utils.shareImage
 import com.metrolist.shared.api.artwork.CanvasContentSource
 import com.metrolist.shared.api.artwork.YouTubeCanvasClip
 import com.metrolist.shared.api.lyrics.LyricsUtils
 import com.metrolist.shared.db.MusicDatabase
 import com.metrolist.shared.db.entities.KIND_DOWNLOAD
+import com.metrolist.shared.deviceconnect.DeviceConnectUiSummary
+import com.metrolist.shared.deviceconnect.rememberDeviceConnectUiSummary
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.cast_permission_required
 import com.metrolist.shared.generated.resources.queued_songs
@@ -104,7 +108,15 @@ class AndroidPlayerPlatform(
     override fun isDeviceConnectActive(): Boolean {
         val state by AndroidDeviceConnect.manager.remote.state
             .collectAsState()
-        return state.sessionId != null
+        return state.sessionId != null || state.transferringToId != null
+    }
+
+    @Composable
+    override fun deviceConnectSummary(): DeviceConnectUiSummary {
+        val managerState by AndroidDeviceConnect.manager.state.collectAsState()
+        val syncState by AndroidDeviceConnect.manager.remote.state
+            .collectAsState()
+        return rememberDeviceConnectUiSummary(managerState, syncState)
     }
 
     @Composable
@@ -179,9 +191,14 @@ class AndroidPlayerPlatform(
     override fun PlayerWindowEffects(
         hideSystemBars: Boolean,
         lockLandscape: Boolean,
+        lightStatusBars: Boolean?,
     ) {
         val isTv = LocalIsTv.current
         val hostView = LocalView.current
+        LifecycleResumeEffect(hostView, lightStatusBars) {
+            SystemBarAppearance.playerLightStatusBars = lightStatusBars
+            onPauseOrDispose { SystemBarAppearance.playerLightStatusBars = null }
+        }
         LaunchedEffect(lockLandscape, isTv) {
             if (!isTv) {
                 activity?.requestedOrientation =

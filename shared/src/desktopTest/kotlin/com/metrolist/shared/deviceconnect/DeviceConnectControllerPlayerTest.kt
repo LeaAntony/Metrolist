@@ -5,6 +5,9 @@ import com.metrolist.shared.playback.MusicPlayer
 import com.metrolist.shared.playback.MusicQueueSnapshot
 import com.metrolist.shared.settings.Settings
 import com.russhwolf.settings.MapSettings
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -30,7 +33,18 @@ class DeviceConnectControllerPlayerTest {
                     pitch = 0.8f,
                 )
             try {
-                player.setControllerPlayback(state)
+                player.beginPendingPlayback(song)
+                val observedSongIds = mutableListOf<String?>()
+                val collector =
+                    launch(Dispatchers.Unconfined, start = CoroutineStart.UNDISPATCHED) {
+                        player.currentSong.collect { observedSongIds += it?.id }
+                    }
+                try {
+                    player.setControllerPlayback(state)
+                    assertEquals(listOf<String?>("remote"), observedSongIds)
+                } finally {
+                    collector.cancel()
+                }
                 assertEquals(1.25f, player.playbackSpeed.value)
                 assertEquals(0.8f, player.playbackPitch.value)
                 assertEquals(song, player.currentSong.value)

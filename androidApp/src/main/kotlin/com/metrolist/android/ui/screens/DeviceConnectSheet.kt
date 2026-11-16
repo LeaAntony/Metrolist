@@ -56,6 +56,7 @@ fun PlayerDeviceConnectSheet(
     val manager = AndroidDeviceConnect.manager
     val state by manager.state.collectAsState()
     val playbackState by manager.remote.state.collectAsState()
+    val isPlaying = playerConnection?.isPlaying?.collectAsState()?.value ?: false
     val scope = rememberCoroutineScope()
     val requiredPermission = AndroidDeviceConnect.requiredLocalNetworkPermission()
     var permissionGranted by remember { mutableStateOf(AndroidDeviceConnect.canUseLocalNetwork(context)) }
@@ -70,6 +71,7 @@ fun PlayerDeviceConnectSheet(
         if (Settings.shared.deviceConnectEnabled && permissionGranted && !manager.state.value.enabled) {
             manager.restoreIfEnabled(context.applicationContext)
         }
+        manager.remote.discoverPlayback()
     }
 
     AdaptiveModalBottomSheet(
@@ -87,6 +89,7 @@ fun PlayerDeviceConnectSheet(
             onDisconnectCast = { playerConnection?.disconnectCast() },
             deviceState = state,
             syncState = playbackState,
+            isPlaying = isPlaying,
             onEnableDeviceConnect = {
                 if (permissionGranted || requiredPermission == null) {
                     scope.launch { manager.enable(context.applicationContext) }
@@ -137,5 +140,6 @@ fun rememberDeviceConnectSettingsHost(): DeviceConnectSettingsHost {
         onPair = manager::pair,
         onCancelPairing = manager::rejectPairing,
         onForget = { id -> scope.launch { manager.forget(id) } },
+        onTransferTo = manager.remote::transferTo,
     )
 }

@@ -24,6 +24,7 @@ import com.metrolist.shared.api.musicvideo.MusicVideoResolver
 import com.metrolist.shared.deviceconnect.DcLocalPlaybackState
 import com.metrolist.shared.model.SearchResultPage
 import com.metrolist.shared.model.SongItem
+import com.metrolist.shared.playback.MusicQueueSnapshot
 import com.metrolist.shared.playback.PlaybackSeekSource
 import com.metrolist.shared.playback.ffmpeg.SabrInputStream
 import com.metrolist.shared.playback.playbackCrossfadeGains
@@ -95,6 +96,27 @@ class ExoPlaybackPlayerTest {
         if (::player.isInitialized) player.releaseAndAwaitScope()
         Dispatchers.resetMain()
         Settings.replaceSharedForTest(null)
+    }
+
+    @Test
+    fun cancellingASilentPreloadDoesNotNotifySystemAudioEffects() {
+        val context = RuntimeEnvironment.getApplication()
+        val incoming =
+            ExoPlaybackPlayer::class.java
+                .getDeclaredMethod("createPlayer", Int::class.javaPrimitiveType, AndroidPlaybackPlayerRole::class.java)
+                .apply { isAccessible = true }
+                .invoke(player, 2_000, AndroidPlaybackPlayerRole.SECONDARY) as ExoPlayer
+        incoming.setAudioSessionId(42)
+        ReflectionHelpers.setField(player, "nextPlayer", incoming)
+        val sessionId = incoming.audioSessionId
+        assertTrue(sessionId > 0)
+        player.cancelNext()
+        shadowOf(Looper.getMainLooper()).idle()
+        assertFalse(
+            shadowOf(context).broadcastIntents.any {
+                it.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, 0) == sessionId
+            },
+        )
     }
 
     @Test
@@ -498,6 +520,13 @@ class ExoPlaybackPlayerTest {
             assertNotSame(normalizationProcessors()[previous], normalizationProcessors()[incoming])
             assertSame(resource, normalizationProcessors().getValue(previous).resource)
             assertSame(nextResource, normalizationProcessors().getValue(incoming).resource)
+            assertFalse(
+                "Preparing a silent track must not reconfigure system effects during the current song",
+                shadowOf(RuntimeEnvironment.getApplication()).broadcastIntents.any {
+                    it.action == AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION &&
+                        it.getIntExtra(AudioEffect.EXTRA_AUDIO_SESSION, 0) == incoming.audioSessionId
+                },
+            )
             player.setVolume(0.8f)
             player.setSleepTimerGain(0.5f)
             assertTrue(player.startNextPlayback())
@@ -1045,6 +1074,40 @@ class ExoPlaybackPlayerTest {
         assertEquals(1.25f, exo.playbackParameters.pitch, 0f)
         assertEquals(24_000L, player.getRealtimePositionMs())
         assertFalse(player.isPlaying.value)
+    }
+
+    @Test
+    fun enteringControllerModeFromLocalPlaybackNeverEmitsTransientNullSong() {
+        val song = song()
+        val queue = MusicQueueSnapshot(listOf(song), listOf(song), 0, originalIndices = listOf(0))
+        player.setQueue(listOf(song), preparePlayback = false)
+        assertEquals(song.id, player.currentSong.value?.id)
+
+        val observedSongIds = mutableListOf<String?>()
+        val collectorScope = CoroutineScope(Dispatchers.Unconfined + SupervisorJob())
+        val job =
+            collectorScope.launch(start = CoroutineStart.UNDISPATCHED) {
+                player.currentSong.collect { observedSongIds += it?.id }
+            }
+        try {
+            player.setControllerPlayback(
+                DcLocalPlaybackState(
+                    queue = queue,
+                    playing = true,
+                    ready = true,
+                    durationMs = 120_000L,
+                    positionMs = 12_000L,
+                ),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(listOf(song.id), observedSongIds)
+            assertEquals(song.id, player.currentSong.value?.id)
+            assertTrue(player.isPlaying.value)
+            assertEquals(120_000L, player.duration.value)
+        } finally {
+            job.cancel()
+            collectorScope.cancel()
+        }
     }
 
     @Test

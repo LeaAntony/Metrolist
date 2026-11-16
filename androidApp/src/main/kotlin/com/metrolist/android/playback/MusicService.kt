@@ -409,6 +409,7 @@ class MusicService :
 
         mediaNotificationProvider =
             PromotedMediaNotificationProvider(
+                this,
                 DefaultMediaNotificationProvider
                     .Builder(this)
                     .setChannelId(PLAYBACK_NOTIFICATION_CHANNEL_ID)
@@ -594,7 +595,11 @@ class MusicService :
             observePlaybackServiceLifetime(taskRemoved, playbackRequired, snapshotFlow { Settings.shared.stopMusicOnTaskClear }) {
                 saveFinalPlaybackState()?.join()
                 running.value = false
-                pauseAllPlayersAndStopSelf()
+                if (shouldPauseSessionPlayersOnTaskClear(AndroidDeviceConnect.manager.remote.isFollowing)) {
+                    pauseAllPlayersAndStopSelf()
+                } else {
+                    stopPlaybackServiceLocallyWithoutRemotePause()
+                }
             }
         }
     }
@@ -907,7 +912,7 @@ class MusicService :
                     ),
                 ).setSessionActivity(sessionActivityPendingIntent)
                 .setMediaButtonPreferences(
-                    ImmutableList.copyOf(transportButtons() + listOf(createLikeButton(), createRepeatButton(), createShuffleButton())),
+                    ImmutableList.of(createLikeButton(), createRepeatButton(), createShuffleButton()),
                 ).build()
                 .also(::addSession)
 
@@ -925,14 +930,13 @@ class MusicService :
             }.distinctUntilChanged().collect {
                 mediaSession?.setMediaButtonPreferences(
                     ImmutableList.copyOf(
-                        transportButtons() +
-                            listOf(
-                                createLikeButton(),
-                                createRepeatButton(),
-                                createShuffleButton(),
-                                createRadioButton(startRadioLabel),
-                                createAddToPlaylistButton(),
-                            ),
+                        listOf(
+                            createLikeButton(),
+                            createRepeatButton(),
+                            createShuffleButton(),
+                            createRadioButton(startRadioLabel),
+                            createAddToPlaylistButton(),
+                        ),
                     ),
                 )
             }
@@ -2078,30 +2082,6 @@ class MusicService :
         return false
     }
 
-    // Before Android 13 the notification draws these, so Previous restarts the song first. Later versions build media
-    // controls from the platform session, where Media3 drops the skip actions for any button in these slots; that
-    // greys out previous/next in OEM panels such as HyperOS's. Their default skip actions already restart first.
-    private fun transportButtons(): List<CommandButton> =
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) listOf(createPreviousButton(), createNextButton()) else emptyList()
-
-    private fun createPreviousButton(): CommandButton =
-        CommandButton
-            .Builder(CommandButton.ICON_PREVIOUS)
-            .setCustomIconResId(R.drawable.ic_notification_skip_previous)
-            .setPlayerCommand(Player.COMMAND_SEEK_TO_PREVIOUS)
-            .setDisplayName(getString(R.string.previous))
-            .setSlots(CommandButton.SLOT_BACK)
-            .build()
-
-    private fun createNextButton(): CommandButton =
-        CommandButton
-            .Builder(CommandButton.ICON_NEXT)
-            .setCustomIconResId(R.drawable.ic_notification_skip_next)
-            .setPlayerCommand(Player.COMMAND_SEEK_TO_NEXT)
-            .setDisplayName(getString(R.string.next))
-            .setSlots(CommandButton.SLOT_FORWARD)
-            .build()
-
     private fun createLikeButton(): CommandButton {
         val song = player.currentSong.value
         val isLiked = song?.id?.let(SongLikeState::isLiked) == true
@@ -2909,11 +2889,28 @@ class MusicService :
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         playbackBenchmark.cancel()
-        super.onTaskRemoved(rootIntent)
-        if (!::player.isInitialized) return
-        saveFinalPlaybackState()
-        flushPodcastProgress()
-        taskRemoved.value = true
+        val action =
+            resolveTaskRemovedServiceAction(
+                isPlaybackOngoing = isPlaybackOngoing,
+                isSessionPlaying = media3Player?.isPlaying == true,
+                isFollowingDeviceConnect = AndroidDeviceConnect.manager.remote.isFollowing,
+            )
+        if (action == TaskRemovedServiceAction.DEFER_TO_MEDIA_SESSION_SERVICE) {
+            super.onTaskRemoved(rootIntent)
+        }
+        if (::player.isInitialized) {
+            saveFinalPlaybackState()
+            flushPodcastProgress()
+            taskRemoved.value = true
+        }
+        if (action == TaskRemovedServiceAction.STOP_LOCALLY_WITHOUT_REMOTE_PAUSE) {
+            stopPlaybackServiceLocallyWithoutRemotePause()
+        }
+    }
+
+    private fun stopPlaybackServiceLocallyWithoutRemotePause() {
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
@@ -3005,6 +3002,7 @@ class MusicService :
                     commands.add(MediaSessionConstants.CommandToggleLike)
                     commands.add(MediaSessionConstants.CommandToggleShuffle)
                     commands.add(MediaSessionConstants.CommandToggleRepeat)
+                    commands.add(MediaSessionConstants.CommandToggleStartRadio)
                     MediaArtworkProvider.allowedPackages += controller.packageName
                 }
                 return MediaSession.ConnectionResult.accept(

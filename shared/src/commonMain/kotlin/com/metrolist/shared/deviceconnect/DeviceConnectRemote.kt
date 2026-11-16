@@ -376,6 +376,17 @@ class DeviceConnectRemote(
         val playback = port ?: return fail(DcSyncError.UNAVAILABLE)
         if (deviceId !in peers) return fail(DcSyncError.UNAVAILABLE)
         if (transferBlocked()) return fail(DcSyncError.NOT_ALLOWED)
+        if (requestedPlayback == null && isFollowing && state.value.targetId == deviceId) {
+            if (awaitingPull) {
+                clearPending()
+                _state.value = _state.value.copy(transferringToId = null, error = null)
+                return
+            }
+            if (awaitingTarget == null || awaitingTarget == deviceId) {
+                _state.value = _state.value.copy(error = null)
+                return
+            }
+        }
         val previousTarget = state.value.targetId?.takeIf { isFollowing && it != deviceId }
         val local = (requestedPlayback ?: playback.snapshot()).forWire()
         val session = newId()
@@ -418,6 +429,7 @@ class DeviceConnectRemote(
             fail(DcSyncError.UNAVAILABLE)
             return
         }
+        _state.value = _state.value.copy(transferringToId = localDeviceId(), error = null)
         startPendingTimeout(target, pullingBack = true)
     }
 
@@ -434,7 +446,12 @@ class DeviceConnectRemote(
         canonical = snapshot
         controllerAnchorMs = monotonicClockMs()
         _state.value =
-            DcSyncState(sessionId = sessionId, targetId = deviceId, playbackAvailable = port != null)
+            DcSyncState(
+                sessionId = sessionId,
+                targetId = deviceId,
+                playbackAvailable = port != null,
+                transferringToId = deviceId,
+            )
         startingDefaultPlayback = false
         port?.setExternalReportingEnabled(enabled = false, session = null)
         port?.setAudioOutputEnabled(false)
@@ -500,7 +517,13 @@ class DeviceConnectRemote(
         val accepted = if (peerId in clockPeers) snapshot else snapshot.copy(playback = snapshot.playback.copy(ready = true))
         canonical = accepted
         controllerAnchorMs = monotonicClockMs()
-        _state.value = _state.value.copy(sessionId = snapshot.sessionId, playbackAvailable = port != null, error = null)
+        _state.value =
+            _state.value.copy(
+                sessionId = snapshot.sessionId,
+                playbackAvailable = port != null,
+                error = null,
+                transferringToId = null,
+            )
         applyCanonical(accepted)
     }
 
@@ -686,8 +709,13 @@ class DeviceConnectRemote(
     ) {
         val error = message.error ?: DcSyncError.UNAVAILABLE
         when {
-            isFollowing && peerId == state.value.targetId && awaitingTarget == peerId -> abortControlling(error)
-            peerId == state.value.targetId || peerId in controllers -> _state.value = _state.value.copy(error = error)
+            isFollowing && peerId == state.value.targetId && awaitingTarget == peerId -> {
+                abortControlling(error)
+            }
+
+            peerId == state.value.targetId || peerId in controllers -> {
+                _state.value = _state.value.copy(error = error, transferringToId = null)
+            }
         }
     }
 
@@ -978,6 +1006,7 @@ class DeviceConnectRemote(
                 targetId = if (following) previous.targetId else localDeviceId(),
                 controllerIds = if (following) emptySet() else controllers.toSet(),
                 playbackAvailable = port != null,
+                transferringToId = null,
             )
     }
 
@@ -1062,7 +1091,7 @@ class DeviceConnectRemote(
     }
 
     private fun fail(error: DcSyncError) {
-        _state.value = _state.value.copy(error = error)
+        _state.value = _state.value.copy(error = error, transferringToId = null)
     }
 
     private suspend fun notifyPeersOfStop() {
