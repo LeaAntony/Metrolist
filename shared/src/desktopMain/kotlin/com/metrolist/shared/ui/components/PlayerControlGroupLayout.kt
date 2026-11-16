@@ -26,7 +26,9 @@ internal fun playerControlLastVisibleIndex(
     if (desiredWidth <= availableWidth) return itemWidths.lastIndex
 
     var count = 0
-    var remaining = availableWidth - overflowWidth - spacing
+    // Mirror Material 3 ButtonGroupMeasurePolicy, which subtracts overflowWidth (without trailing spacing)
+    // before packing visible items left-to-right.
+    var remaining = availableWidth - overflowWidth
     while (count < itemWidths.size && itemWidths[count] <= remaining) {
         remaining -= itemWidths[count] + spacing
         count++

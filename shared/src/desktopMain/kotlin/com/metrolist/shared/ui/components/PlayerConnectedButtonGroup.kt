@@ -278,17 +278,13 @@ actual fun PlayerConnectedButtonGroup(
         groups.forEachIndexed { groupIndex, rawActions ->
             if (groupIndex > 0) Spacer(Modifier.weight(1f))
             var measuredWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
-            var overflowWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
             val measuredItemWidths = remember(groupIndex, sectioned) { mutableStateMapOf<String, Int>() }
             val density = LocalDensity.current
             val spacingPx = with(density) { ButtonGroupDefaults.ConnectedSpaceBetween.roundToPx().toFloat() }
             val defaultItemWidthPx = with(density) { (height + 8.dp).roundToPx().toFloat() }
-            val overflowWidthPx =
-                if (overflowWidth > 0) {
-                    overflowWidth.toFloat()
-                } else {
-                    with(density) { height.roundToPx().toFloat() }
-                }
+            // Match ButtonGroupMeasurePolicy's overflow maxIntrinsicWidth(height); Modifier.onSizeChanged on
+            // OverflowIndicator includes IconButton's minimumInteractiveComponentSize (48.dp) and undercounts slots.
+            val overflowWidthPx = with(density) { height.roundToPx().toFloat() }
             val rawItemWidths =
                 rawActions.map { action ->
                     measuredItemWidths[action.contentDescription]?.toFloat() ?: defaultItemWidthPx
@@ -323,7 +319,7 @@ actual fun PlayerConnectedButtonGroup(
                     ButtonGroupDefaults.OverflowIndicator(
                         menuState = menuState,
                         // Square, so it is a circle like the other icon-only buttons.
-                        modifier = Modifier.size(height).onSizeChanged { size -> overflowWidth = size.width },
+                        modifier = Modifier.size(height),
                         colors =
                             IconButtonDefaults.filledTonalIconButtonColors(
                                 containerColor =

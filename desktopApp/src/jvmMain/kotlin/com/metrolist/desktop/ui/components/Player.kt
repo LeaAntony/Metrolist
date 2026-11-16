@@ -1110,7 +1110,7 @@ fun StandardBottomPlayer(
                             },
                             isLyricsActive = UiState.showLyricsDrawer,
                             isQueueActive = UiState.showPersistentPlayerDrawer,
-                            modifier = Modifier.widthIn(max = if (prioritizeDeviceConnect) 356.dp else 300.dp),
+                            modifier = Modifier.widthIn(max = if (prioritizeDeviceConnect) 348.dp else 300.dp),
                             compact = true,
                             volume = PlayerState.volume,
                             onVolumeChange = { PlayerState.setVolumeLevel(it) },

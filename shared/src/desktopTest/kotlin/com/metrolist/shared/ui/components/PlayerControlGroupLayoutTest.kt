@@ -7,11 +7,12 @@ class PlayerControlGroupLayoutTest {
     @Test
     fun connectedEndFollowsTheLastButtonThatFitsBesideOverflow() {
         assertEquals(3, lastVisible(198f))
-        assertEquals(1, lastVisible(197f))
-        assertEquals(1, lastVisible(148f))
-        assertEquals(0, lastVisible(147f))
-        assertEquals(0, lastVisible(98f))
-        assertEquals(-1, lastVisible(97f))
+        assertEquals(2, lastVisible(196f))
+        assertEquals(1, lastVisible(195f))
+        assertEquals(1, lastVisible(146f))
+        assertEquals(0, lastVisible(145f))
+        assertEquals(0, lastVisible(96f))
+        assertEquals(-1, lastVisible(95f))
     }
 
     @Test
@@ -51,6 +52,8 @@ class PlayerControlGroupLayoutTest {
         // 6 items * 44 + 6 * 2 + 36 = 312 fits [queue..device_connect] beside overflow without moving repeat.
         val lastConnected = playerControlLastVisibleIndex(312f, actions.size, itemWidth, spacing, overflowWidth)
         assertEquals(5, lastConnected)
+        // At 125% DPI when overflow compresses by one gap (390 = 6 * 55 + 6 * 3 + 42), all 6 items still fit.
+        assertEquals(5, playerControlLastVisibleIndex(390f, actions.size, 55f, 3f, 45f))
         assertEquals(
             actions,
             promoteAdjacentControlActions(
@@ -65,9 +68,9 @@ class PlayerControlGroupLayoutTest {
     @Test
     fun variableItemWidthsUseMeasuredButtonSizesForOverflowCutoff() {
         val widths = listOf(44f, 44f, 44f, 76f, 44f, 44f)
-        // First 4 items = 44+44+44+76 = 208; gaps = 4 * 2 = 8; overflow = 36 -> 252.
-        assertEquals(3, playerControlLastVisibleIndex(252f, widths, 2f, 36f))
-        assertEquals(2, playerControlLastVisibleIndex(251f, widths, 2f, 36f))
+        // First 4 items = 44+44+44+76 = 208; gaps before item 3 = 6; overflow = 36 -> 250.
+        assertEquals(3, playerControlLastVisibleIndex(250f, widths, 2f, 36f))
+        assertEquals(2, playerControlLastVisibleIndex(249f, widths, 2f, 36f))
     }
 
     private fun lastVisible(width: Float): Int = playerControlLastVisibleIndex(width, 4, 48f, 2f, 48f)
