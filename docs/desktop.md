@@ -6,6 +6,10 @@ The desktop content surface has no tonal elevation. An elevated parent tints nes
 
 Desktop account buttons keep their avatar visible while the popup transforms. Popup bounds use window coordinates measured outside the animated layer. Dismissal waits for the return animation before navigation. Player overflow rows use the same Material menu item shapes as other desktop menus, with rounded ends and small inner corners.
 
+## Backup file dialogs
+
+Linux backup, restore and playlist-file imports keep FileKit when the XDG file-chooser portal is available, so Flatpak can grant access to files outside its sandbox. When the portal is unavailable, Swing and AWT fallback dialogs run on the Swing event dispatch thread. Onboarding restore uses the same picker. Other platforms keep FileKit. File reads and backup work run off the UI thread.
+
 ## Fullscreen player
 
 The fullscreen player's exit button restores the previous window placement and closes the expanded player. F and Escape keep the expanded player open when leaving native fullscreen. Artwork and video use the same expanded-player state, so switching between them keeps the window fullscreen. The video controls include a video button to return to artwork.
