@@ -9,6 +9,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -103,4 +104,27 @@ class PlaybackServiceLifetimeTest {
             runCurrent()
             assertEquals(1, stops)
         }
+
+    @Test
+    fun taskRemovalWhileFollowingRemoteDeviceNeverTriggersSessionPlayerPause() {
+        assertFalse(shouldPauseSessionPlayersOnTaskClear(isFollowingDeviceConnect = true))
+        assertTrue(shouldPauseSessionPlayersOnTaskClear(isFollowingDeviceConnect = false))
+
+        assertEquals(
+            TaskRemovedServiceAction.NONE,
+            resolveTaskRemovedServiceAction(isPlaybackOngoing = true, isSessionPlaying = true, isFollowingDeviceConnect = true),
+        )
+        assertEquals(
+            TaskRemovedServiceAction.STOP_LOCALLY_WITHOUT_REMOTE_PAUSE,
+            resolveTaskRemovedServiceAction(isPlaybackOngoing = true, isSessionPlaying = false, isFollowingDeviceConnect = true),
+        )
+        assertEquals(
+            TaskRemovedServiceAction.STOP_LOCALLY_WITHOUT_REMOTE_PAUSE,
+            resolveTaskRemovedServiceAction(isPlaybackOngoing = false, isSessionPlaying = true, isFollowingDeviceConnect = true),
+        )
+        assertEquals(
+            TaskRemovedServiceAction.DEFER_TO_MEDIA_SESSION_SERVICE,
+            resolveTaskRemovedServiceAction(isPlaybackOngoing = false, isSessionPlaying = false, isFollowingDeviceConnect = false),
+        )
+    }
 }

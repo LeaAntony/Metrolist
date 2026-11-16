@@ -7,6 +7,25 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+internal enum class TaskRemovedServiceAction {
+    NONE,
+    DEFER_TO_MEDIA_SESSION_SERVICE,
+    STOP_LOCALLY_WITHOUT_REMOTE_PAUSE,
+}
+
+internal fun resolveTaskRemovedServiceAction(
+    isPlaybackOngoing: Boolean,
+    isSessionPlaying: Boolean,
+    isFollowingDeviceConnect: Boolean,
+): TaskRemovedServiceAction =
+    when {
+        !isFollowingDeviceConnect -> TaskRemovedServiceAction.DEFER_TO_MEDIA_SESSION_SERVICE
+        !isPlaybackOngoing || !isSessionPlaying -> TaskRemovedServiceAction.STOP_LOCALLY_WITHOUT_REMOTE_PAUSE
+        else -> TaskRemovedServiceAction.NONE
+    }
+
+internal fun shouldPauseSessionPlayersOnTaskClear(isFollowingDeviceConnect: Boolean): Boolean = !isFollowingDeviceConnect
+
 internal fun roomNeedsPlaybackService(
     inRoom: Boolean,
     requestPending: Boolean,

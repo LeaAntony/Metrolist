@@ -39,5 +39,36 @@ class PlayerControlGroupLayoutTest {
         assertEquals(actions, promoteAdjacentControlActions(actions, 0, 4, 5))
     }
 
+    @Test
+    fun compactBottomPlayerFitsVolumeAndDeviceConnectWithoutDisplacingRepeat() {
+        val actions = listOf("queue", "lyrics", "shuffle", "repeat", "volume", "device_connect", "miniplayer", "fullscreen")
+        val itemWidth = 44f
+        val overflowWidth = 36f
+        val spacing = 2f
+
+        // 5 items * 44 + 5 * 2 + 36 = 266 fits [queue..volume] beside overflow; volume is index 4 (trailing corner).
+        assertEquals(4, playerControlLastVisibleIndex(266f, actions.size, itemWidth, spacing, overflowWidth))
+        // 6 items * 44 + 6 * 2 + 36 = 312 fits [queue..device_connect] beside overflow without moving repeat.
+        val lastConnected = playerControlLastVisibleIndex(312f, actions.size, itemWidth, spacing, overflowWidth)
+        assertEquals(5, lastConnected)
+        assertEquals(
+            actions,
+            promoteAdjacentControlActions(
+                actions = actions,
+                lastVisibleIndex = lastConnected,
+                primaryIndex = actions.indexOf("volume"),
+                secondaryIndex = actions.indexOf("device_connect"),
+            ),
+        )
+    }
+
+    @Test
+    fun variableItemWidthsUseMeasuredButtonSizesForOverflowCutoff() {
+        val widths = listOf(44f, 44f, 44f, 76f, 44f, 44f)
+        // First 4 items = 44+44+44+76 = 208; gaps = 4 * 2 = 8; overflow = 36 -> 252.
+        assertEquals(3, playerControlLastVisibleIndex(252f, widths, 2f, 36f))
+        assertEquals(2, playerControlLastVisibleIndex(251f, widths, 2f, 36f))
+    }
+
     private fun lastVisible(width: Float): Int = playerControlLastVisibleIndex(width, 4, 48f, 2f, 48f)
 }

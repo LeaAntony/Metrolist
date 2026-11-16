@@ -28,7 +28,6 @@ import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.FilledTonalToggleButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuDefaults
 import androidx.compose.material3.SliderDefaults
@@ -41,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -64,7 +64,6 @@ import androidx.compose.ui.unit.IntRect
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.takeOrElse
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
@@ -268,7 +267,6 @@ actual fun PlayerConnectedButtonGroup(
             event.changes.forEach { it.consume() }
         }
     val filledTonalToggleButtonDefaults = FilledTonalToggleButtonDefaults.colors()
-    val minimumTouchTarget = LocalMinimumInteractiveComponentSize.current.takeOrElse { 0.dp }
 
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         val groups =
@@ -281,31 +279,44 @@ actual fun PlayerConnectedButtonGroup(
             if (groupIndex > 0) Spacer(Modifier.weight(1f))
             var measuredWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
             var overflowWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
+            val measuredItemWidths = remember(groupIndex, sectioned) { mutableStateMapOf<String, Int>() }
             val density = LocalDensity.current
-            val spacingPx = with(density) { ButtonGroupDefaults.ConnectedSpaceBetween.toPx() }
-            val itemWidthPx = with(density) { (height + 8.dp).coerceAtLeast(minimumTouchTarget).toPx() }
+            val spacingPx = with(density) { ButtonGroupDefaults.ConnectedSpaceBetween.roundToPx().toFloat() }
+            val defaultItemWidthPx = with(density) { (height + 8.dp).roundToPx().toFloat() }
             val overflowWidthPx =
                 if (overflowWidth > 0) {
                     overflowWidth.toFloat()
                 } else {
-                    with(density) { 40.dp.coerceAtLeast(minimumTouchTarget).toPx() }
+                    with(density) { height.roundToPx().toFloat() }
                 }
-            val lastVisibleIndex =
-                remember(measuredWidth, rawActions.size, itemWidthPx, spacingPx, overflowWidthPx) {
-                    playerControlLastVisibleIndex(measuredWidth.toFloat(), rawActions.size, itemWidthPx, spacingPx, overflowWidthPx)
+            val rawItemWidths =
+                rawActions.map { action ->
+                    measuredItemWidths[action.contentDescription]?.toFloat() ?: defaultItemWidthPx
+                }
+            val rawLastVisibleIndex =
+                remember(measuredWidth, rawItemWidths, spacingPx, overflowWidthPx) {
+                    playerControlLastVisibleIndex(measuredWidth.toFloat(), rawItemWidths, spacingPx, overflowWidthPx)
                 }
             val actions =
-                remember(rawActions, lastVisibleIndex, prioritizeDeviceConnect, sectioned, volumeAction, deviceConnectAction) {
+                remember(rawActions, rawLastVisibleIndex, prioritizeDeviceConnect, sectioned, volumeAction, deviceConnectAction) {
                     if (!prioritizeDeviceConnect || sectioned || deviceConnectAction == null) {
                         rawActions
                     } else {
                         promoteAdjacentControlActions(
                             actions = rawActions,
-                            lastVisibleIndex = lastVisibleIndex,
+                            lastVisibleIndex = rawLastVisibleIndex,
                             primaryIndex = rawActions.indexOfFirst { it === volumeAction },
                             secondaryIndex = rawActions.indexOfFirst { it === deviceConnectAction },
                         )
                     }
+                }
+            val displayItemWidths =
+                actions.map { action ->
+                    measuredItemWidths[action.contentDescription]?.toFloat() ?: defaultItemWidthPx
+                }
+            val lastVisibleIndex =
+                remember(measuredWidth, displayItemWidths, spacingPx, overflowWidthPx) {
+                    playerControlLastVisibleIndex(measuredWidth.toFloat(), displayItemWidths, spacingPx, overflowWidthPx)
                 }
             ButtonGroup(
                 overflowIndicator = { menuState ->
@@ -346,7 +357,9 @@ actual fun PlayerConnectedButtonGroup(
                             val interactionSource = remember { MutableInteractionSource() }
                             val startsSegment = index == 0
                             val endsSegment = index == lastVisibleIndex
-                            Box {
+                            Box(
+                                modifier = Modifier.onSizeChanged { measuredItemWidths[action.contentDescription] = it.width },
+                            ) {
                                 ToggleButton(
                                     checked = action.checked == true,
                                     interactionSource = interactionSource,

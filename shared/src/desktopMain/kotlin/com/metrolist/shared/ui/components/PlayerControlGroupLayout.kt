@@ -6,15 +6,29 @@ internal fun playerControlLastVisibleIndex(
     itemWidth: Float,
     spacing: Float,
     overflowWidth: Float,
+): Int =
+    playerControlLastVisibleIndex(
+        availableWidth = availableWidth,
+        itemWidths = List(itemCount) { itemWidth },
+        spacing = spacing,
+        overflowWidth = overflowWidth,
+    )
+
+internal fun playerControlLastVisibleIndex(
+    availableWidth: Float,
+    itemWidths: List<Float>,
+    spacing: Float,
+    overflowWidth: Float,
 ): Int {
-    if (availableWidth <= 0) return itemCount - 1
-    val desiredWidth = itemCount * itemWidth + (itemCount - 1).coerceAtLeast(0) * spacing
-    if (desiredWidth <= availableWidth) return itemCount - 1
+    if (itemWidths.isEmpty()) return -1
+    if (availableWidth <= 0f) return itemWidths.lastIndex
+    val desiredWidth = itemWidths.sum() + (itemWidths.size - 1).coerceAtLeast(0) * spacing
+    if (desiredWidth <= availableWidth) return itemWidths.lastIndex
 
     var count = 0
     var remaining = availableWidth - overflowWidth - spacing
-    while (count < itemCount && itemWidth <= remaining) {
-        remaining -= itemWidth + spacing
+    while (count < itemWidths.size && itemWidths[count] <= remaining) {
+        remaining -= itemWidths[count] + spacing
         count++
     }
     return count - 1

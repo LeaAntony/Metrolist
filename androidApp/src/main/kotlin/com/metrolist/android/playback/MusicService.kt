@@ -594,7 +594,11 @@ class MusicService :
             observePlaybackServiceLifetime(taskRemoved, playbackRequired, snapshotFlow { Settings.shared.stopMusicOnTaskClear }) {
                 saveFinalPlaybackState()?.join()
                 running.value = false
-                pauseAllPlayersAndStopSelf()
+                if (shouldPauseSessionPlayersOnTaskClear(AndroidDeviceConnect.manager.remote.isFollowing)) {
+                    pauseAllPlayersAndStopSelf()
+                } else {
+                    stopPlaybackServiceLocallyWithoutRemotePause()
+                }
             }
         }
     }
@@ -2909,11 +2913,28 @@ class MusicService :
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         playbackBenchmark.cancel()
-        super.onTaskRemoved(rootIntent)
-        if (!::player.isInitialized) return
-        saveFinalPlaybackState()
-        flushPodcastProgress()
-        taskRemoved.value = true
+        val action =
+            resolveTaskRemovedServiceAction(
+                isPlaybackOngoing = isPlaybackOngoing,
+                isSessionPlaying = media3Player?.isPlaying == true,
+                isFollowingDeviceConnect = AndroidDeviceConnect.manager.remote.isFollowing,
+            )
+        if (action == TaskRemovedServiceAction.DEFER_TO_MEDIA_SESSION_SERVICE) {
+            super.onTaskRemoved(rootIntent)
+        }
+        if (::player.isInitialized) {
+            saveFinalPlaybackState()
+            flushPodcastProgress()
+            taskRemoved.value = true
+        }
+        if (action == TaskRemovedServiceAction.STOP_LOCALLY_WITHOUT_REMOTE_PAUSE) {
+            stopPlaybackServiceLocallyWithoutRemotePause()
+        }
+    }
+
+    private fun stopPlaybackServiceLocallyWithoutRemotePause() {
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     override fun onDestroy() {
