@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -74,6 +75,7 @@ import com.metrolist.shared.generated.resources.device_connect_title
 import com.metrolist.shared.generated.resources.exit_fullscreen
 import com.metrolist.shared.generated.resources.fullscreen
 import com.metrolist.shared.generated.resources.lyrics
+import com.metrolist.shared.generated.resources.now_playing
 import com.metrolist.shared.generated.resources.open_miniplayer
 import com.metrolist.shared.generated.resources.queue
 import com.metrolist.shared.generated.resources.shuffle
@@ -122,6 +124,8 @@ actual fun PlayerConnectedButtonGroup(
     onDeviceConnectClick: (() -> Unit)?,
     isDeviceConnectActive: Boolean,
     prioritizeDeviceConnect: Boolean,
+    onNowPlayingClick: (() -> Unit)?,
+    isNowPlayingActive: Boolean,
     touchTarget: Dp,
     sectioned: Boolean,
 ) {
@@ -130,6 +134,14 @@ actual fun PlayerConnectedButtonGroup(
     val iconSize = if (compact) 20.dp else 24.dp
     val leftActions =
         listOfNotNull(
+            onNowPlayingClick?.let {
+                PlayerControlAction(
+                    if (isNowPlayingActive) MetrolistIcons.Filled.SmartDisplay else MetrolistIcons.Outlined.SmartDisplay,
+                    stringResource(Res.string.now_playing),
+                    it,
+                    isNowPlayingActive,
+                )
+            },
             PlayerControlAction(
                 MetrolistIcons.AutoMirrored.Filled.QueueMusic,
                 stringResource(Res.string.queue),
@@ -187,7 +199,6 @@ actual fun PlayerConnectedButtonGroup(
         }
     val rightActions =
         listOfNotNull(
-            deviceConnectAction,
             onCastClick
                 ?.takeIf {
                     Settings.shared.isPlayerCastButtonVisible
@@ -254,28 +265,36 @@ actual fun PlayerConnectedButtonGroup(
             },
             false,
         )
+    val currentVolume by rememberUpdatedState(volume)
+    val currentOnVolumeChange by rememberUpdatedState(onVolumeChange)
     val sliderState = rememberSliderState(value = volume)
     sliderState.value = volume
     val volumeScrollModifier =
-        Modifier.onPointerEvent(PointerEventType.Scroll) { event ->
-            val delta =
-                event.changes
-                    .firstOrNull()
-                    ?.scrollDelta
-                    ?.y ?: 0f
-            onVolumeChange((volume - delta * 0.05f).coerceIn(0f, 1f))
-            event.changes.forEach { it.consume() }
+        remember {
+            Modifier.onPointerEvent(PointerEventType.Scroll) { event ->
+                val delta =
+                    event.changes
+                        .firstOrNull()
+                        ?.scrollDelta
+                        ?.y ?: 0f
+                if (delta != 0f) {
+                    currentOnVolumeChange((currentVolume - delta * 0.05f).coerceIn(0f, 1f))
+                }
+                event.changes.forEach { it.consume() }
+            }
         }
     val filledTonalToggleButtonDefaults = FilledTonalToggleButtonDefaults.colors()
 
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         val groups =
-            if (sectioned) {
-                listOf(leftActions, listOf(volumeAction) + rightActions)
-            } else {
-                listOf(leftActions + volumeAction + rightActions)
-            }
-        groups.forEachIndexed { groupIndex, rawActions ->
+            buildPlayerControlGroups(
+                leftActions = leftActions,
+                volumeAction = volumeAction,
+                deviceConnectAction = deviceConnectAction,
+                rightActions = rightActions,
+                sectioned = sectioned,
+            )
+        groups.forEachIndexed { groupIndex, rawEntries ->
             if (groupIndex > 0) Spacer(Modifier.weight(1f))
             var measuredWidth by remember(groupIndex, sectioned) { mutableIntStateOf(0) }
             val measuredItemWidths = remember(groupIndex, sectioned) { mutableStateMapOf<String, Int>() }
@@ -286,29 +305,23 @@ actual fun PlayerConnectedButtonGroup(
             // OverflowIndicator includes IconButton's minimumInteractiveComponentSize (48.dp) and undercounts slots.
             val overflowWidthPx = with(density) { height.roundToPx().toFloat() }
             val rawItemWidths =
-                rawActions.map { action ->
-                    measuredItemWidths[action.contentDescription]?.toFloat() ?: defaultItemWidthPx
+                rawEntries.map { entry ->
+                    measuredItemWidths[entry.action.contentDescription]?.toFloat() ?: defaultItemWidthPx
                 }
             val rawLastVisibleIndex =
                 remember(measuredWidth, rawItemWidths, spacingPx, overflowWidthPx) {
                     playerControlLastVisibleIndex(measuredWidth.toFloat(), rawItemWidths, spacingPx, overflowWidthPx)
                 }
-            val actions =
-                remember(rawActions, rawLastVisibleIndex, prioritizeDeviceConnect, sectioned, volumeAction, deviceConnectAction) {
-                    if (!prioritizeDeviceConnect || sectioned || deviceConnectAction == null) {
-                        rawActions
-                    } else {
-                        promoteAdjacentControlActions(
-                            actions = rawActions,
-                            lastVisibleIndex = rawLastVisibleIndex,
-                            primaryIndex = rawActions.indexOfFirst { it === volumeAction },
-                            secondaryIndex = rawActions.indexOfFirst { it === deviceConnectAction },
-                        )
-                    }
-                }
+            val entries =
+                resolveDisplayedControlEntries(
+                    rawEntries = rawEntries,
+                    rawLastVisibleIndex = rawLastVisibleIndex,
+                    prioritizeDeviceConnect = prioritizeDeviceConnect,
+                    sectioned = sectioned,
+                )
             val displayItemWidths =
-                actions.map { action ->
-                    measuredItemWidths[action.contentDescription]?.toFloat() ?: defaultItemWidthPx
+                entries.map { entry ->
+                    measuredItemWidths[entry.action.contentDescription]?.toFloat() ?: defaultItemWidthPx
                 }
             val lastVisibleIndex =
                 remember(measuredWidth, displayItemWidths, spacingPx, overflowWidthPx) {
@@ -347,7 +360,9 @@ actual fun PlayerConnectedButtonGroup(
                         .then(if (sectioned) Modifier else Modifier.weight(1f, fill = false))
                         .playerControlBlend(),
             ) {
-                actions.forEachIndexed { index, action ->
+                entries.forEachIndexed { index, entry ->
+                    val action = entry.action
+                    val isVolume = entry.role == ControlActionRole.VOLUME
                     customItem(
                         buttonGroupContent = {
                             val interactionSource = remember { MutableInteractionSource() }
@@ -404,9 +419,7 @@ actual fun PlayerConnectedButtonGroup(
                                                     Modifier.width(height + 8.dp)
                                                 },
                                             ).then(
-                                                if (action ===
-                                                    volumeAction
-                                                ) {
+                                                if (isVolume) {
                                                     Modifier
                                                         .onPreviewKeyEvent { event ->
                                                             if (event.key in
@@ -441,7 +454,7 @@ actual fun PlayerConnectedButtonGroup(
                                         Icon(action.icon, action.contentDescription, Modifier.size(iconSize))
                                     }
                                 }
-                                if (action === volumeAction) {
+                                if (isVolume) {
                                     // Fade and scale like the app's other popups instead of appearing at once.
                                     PopupVisibility(visible = showVolume || keyboardVolume) {
                                         Popup(
@@ -460,8 +473,8 @@ actual fun PlayerConnectedButtonGroup(
                                                     Modifier
                                                         .popupMotion()
                                                         .hoverable(popupHover)
-                                                        .padding(bottom = 8.dp)
-                                                        .then(volumeScrollModifier),
+                                                        .then(volumeScrollModifier)
+                                                        .padding(bottom = 8.dp),
                                             ) {
                                                 Column(
                                                     modifier = Modifier.padding(12.dp),
@@ -500,7 +513,7 @@ actual fun PlayerConnectedButtonGroup(
                         },
                         menuContent = { menu ->
                             val overflowIndex = (index - lastVisibleIndex - 1).coerceAtLeast(0)
-                            val overflowCount = (actions.size - lastVisibleIndex - 1).coerceAtLeast(1)
+                            val overflowCount = (entries.size - lastVisibleIndex - 1).coerceAtLeast(1)
                             val shape = MenuDefaults.itemShape(overflowIndex, overflowCount).shape
                             DropdownMenuItem(
                                 shape = shape,

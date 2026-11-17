@@ -166,6 +166,7 @@ import com.metrolist.shared.generated.resources.menu_repeat_one
 import com.metrolist.shared.generated.resources.menu_shuffle_off
 import com.metrolist.shared.generated.resources.menu_shuffle_on
 import com.metrolist.shared.generated.resources.next
+import com.metrolist.shared.generated.resources.now_playing
 import com.metrolist.shared.generated.resources.pause
 import com.metrolist.shared.generated.resources.play
 import com.metrolist.shared.generated.resources.previous
@@ -606,6 +607,20 @@ fun WindowScope.TopBarWithPlayer(
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            val isNowPlayingOpen = UiState.isNowPlayingDrawerVisible
+                            IconButton(
+                                onClick = UiState::toggleNowPlayingDrawer,
+                                modifier = Modifier.size(40.dp),
+                                shapes = IconButtonDefaults.shapes(),
+                            ) {
+                                Icon(
+                                    MetrolistIcons.Outlined.SmartDisplay,
+                                    contentDescription = stringResource(Res.string.now_playing),
+                                    tint = if (isNowPlayingOpen) colorScheme.primary else colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+
                             val isLyricsOpen = UiState.showLyricsDrawer
                             IconButton(
                                 onClick = {

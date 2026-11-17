@@ -155,6 +155,7 @@ import com.metrolist.shared.constants.SentryEnabledKey
 import com.metrolist.shared.constants.ShowBottomNavHomeKey
 import com.metrolist.shared.constants.ShowBottomNavLibraryKey
 import com.metrolist.shared.constants.ShowBottomNavSearchKey
+import com.metrolist.shared.constants.ShowDesktopNowPlayingPanelKey
 import com.metrolist.shared.constants.ShowExpressiveMiniPlayerLikeButtonKey
 import com.metrolist.shared.constants.ShowExpressiveMiniPlayerNextButtonKey
 import com.metrolist.shared.constants.ShowExpressiveMiniPlayerPlayPauseButtonKey
@@ -458,6 +459,7 @@ class Settings(
     var subtitleTextSize by preference(16f)
     var lyricsClickToSeek by preference(true)
     var showLyricsOnPlayer by preference(ShowLyricsOnPlayerKey, false)
+    var showDesktopNowPlayingPanel by preference(ShowDesktopNowPlayingPanelKey, true)
     var lyricsActiveByRealTiming by preference(LyricsActiveByRealTimingKey, false)
     var lyricsProgressiveBlur by preference(LyricsProgressiveBlurKey, false)
 
@@ -584,8 +586,6 @@ class Settings(
 
     var checkForUpdates by preference(true)
     var updateNotifications by preference(true)
-    var updateChannel by preference("")
-    var installedNightlyDigest by preference("")
     var lastUpdateCheckTimestamp by preference(0L)
     var lastUpdateCheckAttemptTimestamp by preference(0L)
     var lastRunAppVersion by preference("")
@@ -1350,7 +1350,6 @@ class Settings(
                     "cachedAvailableUpdateJson",
                     "cachedUpdateReleasesJson",
                     "pendingUpdateReleaseJson",
-                    "installedNightlyDigest",
                     "lastUpdateCheckTime",
                     DevtoolsUnlockedKey,
                     DevtoolsPlaybackClientKey,

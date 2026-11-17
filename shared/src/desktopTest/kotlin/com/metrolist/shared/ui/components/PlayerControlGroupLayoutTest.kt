@@ -73,5 +73,47 @@ class PlayerControlGroupLayoutTest {
         assertEquals(2, playerControlLastVisibleIndex(249f, widths, 2f, 36f))
     }
 
+    @Test
+    fun volumeAndDeviceConnectRolesSurviveFreshInstancesAndPromotion() {
+        data class SampleAction(
+            val id: String,
+        )
+
+        val compactGroups =
+            buildPlayerControlGroups(
+                leftActions = listOf(SampleAction("queue"), SampleAction("lyrics"), SampleAction("repeat")),
+                volumeAction = SampleAction("volume"),
+                deviceConnectAction = SampleAction("device"),
+                rightActions = listOf(SampleAction("mini")),
+                sectioned = false,
+            )
+        assertEquals(1, compactGroups.size)
+
+        val promoted =
+            resolveDisplayedControlEntries(
+                rawEntries = compactGroups.single(),
+                rawLastVisibleIndex = 2,
+                prioritizeDeviceConnect = true,
+                sectioned = false,
+            )
+        assertEquals(
+            listOf("queue", "volume", "device", "lyrics", "repeat", "mini"),
+            promoted.map { it.action.id },
+        )
+        assertEquals(ControlActionRole.VOLUME, promoted[1].role)
+        assertEquals(ControlActionRole.DEVICE_CONNECT, promoted[2].role)
+
+        val sectionedGroups =
+            buildPlayerControlGroups(
+                leftActions = listOf(SampleAction("queue"), SampleAction("lyrics")),
+                volumeAction = SampleAction("volume"),
+                deviceConnectAction = null,
+                rightActions = listOf(SampleAction("fullscreen")),
+                sectioned = true,
+            )
+        assertEquals(2, sectionedGroups.size)
+        assertEquals(ControlActionRole.VOLUME, sectionedGroups[1].first().role)
+    }
+
     private fun lastVisible(width: Float): Int = playerControlLastVisibleIndex(width, 4, 48f, 2f, 48f)
 }

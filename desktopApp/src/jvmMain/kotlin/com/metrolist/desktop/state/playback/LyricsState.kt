@@ -153,7 +153,10 @@ open class DesktopLyricsState internal constructor(
     fun toggleLyricsDrawer() {
         val showLyrics = !UiState.showLyricsDrawer
         UiState.showLyricsDrawer = showLyrics
-        if (showLyrics) UiState.showDeviceConnectPanel = false
+        if (showLyrics) {
+            UiState.showDeviceConnectPanel = false
+            UiState.showNarrowNowPlayingOverlay = false
+        }
         if (showLyrics && currentLyrics == null && !isLyricsLoading) {
             currentTrack()?.let(::fetchLyrics)
         }

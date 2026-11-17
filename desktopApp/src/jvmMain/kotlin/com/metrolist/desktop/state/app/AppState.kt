@@ -33,13 +33,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.jetbrains.compose.resources.getString
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
-import kotlin.time.Duration.Companion.hours
 
 object AppState {
     val directCanvasProvider by lazy { DirectCanvasProvider(GlobalYouTube.client) }
@@ -59,20 +57,10 @@ object AppState {
             }
         }
 
-    init {
-        // Hourly keeps nightly users current while staying far below GitHub's unauthenticated rate limit.
-        scope.launch {
-            while (true) {
-                delay(1.hours)
-                if (Settings.shared.checkForUpdates) checkForUpdates(notify = true)
-            }
-        }
-    }
-
     private suspend fun applyReleases(releases: List<GitHubDesktopRelease>) {
-        UiState.updateReleases = releases.filterNot { it.isNightly }
+        UiState.updateReleases = releases
         val update = DesktopUpdateManager.availableUpdate(releases)
-        if (UiState.availableUpdate?.updateKey != update?.updateKey) UiState.updateDownloadError = null
+        if (UiState.availableUpdate?.version != update?.version) UiState.updateDownloadError = null
         UiState.availableUpdate = update
         UiState.canInstallUpdate = UiState.availableUpdate?.let { DesktopUpdateManager.canInstall(it) } == true
     }
@@ -103,9 +91,9 @@ object AppState {
 
     private fun notifyUpdateAvailable() {
         val release = UiState.availableUpdate ?: return
-        if (!Settings.shared.updateNotifications || Settings.shared.lastNotifiedUpdateVersion == release.updateKey) return
+        if (!Settings.shared.updateNotifications || Settings.shared.lastNotifiedUpdateVersion == release.version) return
         scope.launch {
-            Settings.shared.lastNotifiedUpdateVersion = release.updateKey
+            Settings.shared.lastNotifiedUpdateVersion = release.version
             val result =
                 snackbarHostState.showSnackbar(
                     message = getString(Res.string.updates_available_title, release.version),

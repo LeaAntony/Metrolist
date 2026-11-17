@@ -464,7 +464,14 @@ private fun StandardPlayerProgress(colorScheme: ColorScheme) {
     val canSeek = !isListenTogetherGuest && !isLive
 
     val displayPosition = {
-        if (isDragging || pendingSeekTargetMs != null) (sliderValue * playerDuration).toLong() else playerPosition.value
+        when {
+            isDragging || pendingSeekTargetMs != null -> (sliderValue * playerDuration).toLong()
+
+            isLive -> playerPosition.value
+
+            // The seek bar's clock, so the label changes in the same repaint as a progress step.
+            else -> smoothPosition.longValue
+        }
     }
 
     Row(
@@ -1108,7 +1115,9 @@ fun StandardBottomPlayer(
                             },
                             isLyricsActive = UiState.showLyricsDrawer,
                             isQueueActive = UiState.showPersistentPlayerDrawer,
-                            modifier = Modifier.widthIn(max = if (prioritizeDeviceConnect) 348.dp else 300.dp),
+                            onNowPlayingClick = UiState::toggleNowPlayingDrawer,
+                            isNowPlayingActive = UiState.isNowPlayingDrawerVisible,
+                            modifier = Modifier.widthIn(max = if (prioritizeDeviceConnect) 396.dp else 348.dp),
                             compact = true,
                             volume = PlayerState.volume,
                             onVolumeChange = { PlayerState.setVolumeLevel(it) },

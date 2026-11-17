@@ -37,6 +37,8 @@ expect fun PlayerConnectedButtonGroup(
     onDeviceConnectClick: (() -> Unit)? = null,
     isDeviceConnectActive: Boolean = false,
     prioritizeDeviceConnect: Boolean = false,
+    onNowPlayingClick: (() -> Unit)? = null,
+    isNowPlayingActive: Boolean = false,
     touchTarget: Dp = 40.dp,
     sectioned: Boolean = false,
 )
