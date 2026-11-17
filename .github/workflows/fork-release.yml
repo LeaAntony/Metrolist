@@ -196,7 +196,7 @@ jobs:
       - name: Build Windows release application
         shell: bash
         env:
-          ORG_GRADLE_PROJECT_appVersion: ${{ needs.version.outputs.package_version }}
+          ORG_GRADLE_PROJECT_appVersion: ${{ needs.version.outputs.base_version }}
           LASTFM_API_KEY: ${{ secrets.LASTFM_API_KEY }}
           LASTFM_SECRET: ${{ secrets.LASTFM_SECRET }}
           LYPRIO_BASE_URL: ${{ secrets.LYPRIO_BASE_URL }}
@@ -211,34 +211,122 @@ jobs:
             --no-daemon \
             --no-configuration-cache
 
-      - name: Build offline Windows Setup EXE
+      - name: Upload Windows portable package artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: fork-desktop-windows
+          path: dist/Metrolist-Desktop-Windows.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  windows-manager:
+    name: Windows Manager Installer
+    needs: [version, windows]
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out Metrolist
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned MetrolistManager
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: MetrolistGroup/MetrolistManager
+          ref: 18d2846bcc95847f08ea969d707222c1566d9f65
+          path: manager-source
+          persist-credentials: false
+
+      - name: Download portable artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: fork-desktop-windows
+          path: release-input
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: manager-source/go.mod
+          cache-dependency-path: manager-source/go.sum
+
+      - name: Generate release-bound manager config
         shell: pwsh
         env:
-          BASE_VERSION: ${{ needs.version.outputs.base_version }}
-          RUN_NUMBER: ${{ github.run_number }}
+          APP_VERSION: ${{ needs.version.outputs.base_version }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          if (-not (Test-Path "build/wix311/light.exe")) {
-            & ./gradlew.bat :unzipWix --no-daemon --no-configuration-cache
-            if ($LASTEXITCODE -ne 0) { throw "Failed to prepare WiX 3.11 ($LASTEXITCODE)" }
-          }
-          & ./.github/installer/build-windows-installer.ps1 `
-            -Version $env:BASE_VERSION `
-            -BuildNumber ([int]$env:RUN_NUMBER) `
-            -OutputExe "dist/Metrolist-Setup-$($env:BASE_VERSION)-win-x64.exe"
+          $parts = $env:GH_REPO.Split('/')
+          $owner = $parts[0]
+          $repo = $parts[1]
+          $config = @"
+          package buildconfig
+
+          const (
+              TargetVersion = "$env:APP_VERSION"
+              ReleaseTag = "v$env:APP_VERSION"
+              DesktopAssetName = "Metrolist-Desktop-windows.zip"
+              RepositoryOwner = "$owner"
+              RepositoryName = "$repo"
+          )
+          "@
+          Set-Content -Path "manager-source/internal/buildconfig/config.go" -Value $config -Encoding utf8
+
+      - name: Test manager
+        working-directory: manager-source
+        shell: pwsh
+        run: |
+          go test ./...
+          go vet ./...
+
+      - name: Validate portable payload
+        working-directory: manager-source
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.version.outputs.base_version }}
+        run: go run ./cmd/validate-payload "../release-input/Metrolist-Desktop-Windows.zip" "$env:APP_VERSION"
+
+      - name: Embed Windows resources
+        working-directory: manager-source
+        shell: pwsh
+        run: >-
+          go run github.com/akavel/rsrc@v0.10.2
+          -arch amd64
+          -manifest MetrolistManager.exe.manifest
+          -ico ../desktopApp/src/desktopMain/resources/logo.ico
+          -o rsrc_windows_amd64.syso
+
+      - name: Build manager
+        working-directory: manager-source
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.version.outputs.base_version }}
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -trimpath -ldflags "-s -w -H=windowsgui" -o "dist/metrolist-installer-windows-x64-$env:APP_VERSION.exe" .
+
+      - name: Install, repair and uninstall end to end
+        working-directory: manager-source
+        shell: pwsh
+        env:
+          APP_VERSION: ${{ needs.version.outputs.base_version }}
+        run: |
+          $env:METROLIST_MANAGER_E2E_BINARY = (Resolve-Path "dist/metrolist-installer-windows-x64-$env:APP_VERSION.exe").Path
+          $env:METROLIST_MANAGER_E2E_PAYLOAD = (Resolve-Path "../release-input/Metrolist-Desktop-Windows.zip").Path
+          $env:METROLIST_MANAGER_E2E_VERSION = $env:APP_VERSION
+          go test -run TestEndToEndInstallUpdateAndUninstall -count=1 -v .
 
       - name: Upload Windows installer artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: fork-windows-installer
-          path: |
-            dist/Metrolist-Setup-*.exe
-            dist/Metrolist-Desktop-Windows.zip
+          path: manager-source/dist/metrolist-installer-windows-x64-${{ needs.version.outputs.base_version }}.exe
           if-no-files-found: error
           retention-days: 14
 
   publish:
     name: Publish GitHub Release
-    needs: [version, android, windows]
+    needs: [version, android, windows, windows-manager]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -257,6 +345,12 @@ jobs:
           name: fork-android-apk
           path: release-assets
 
+      - name: Download Windows portable package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: fork-desktop-windows
+          path: release-assets
+
       - name: Download Windows installer
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -269,26 +363,35 @@ jobs:
           BASE_VERSION: ${{ needs.version.outputs.base_version }}
         run: |
           set -euo pipefail
-          installer="release-assets/Metrolist-Setup-${BASE_VERSION}-win-x64.exe"
+          installer="release-assets/metrolist-installer-windows-x64-${BASE_VERSION}.exe"
+          windows_zip="release-assets/Metrolist-Desktop-Windows.zip"
           apk="release-assets/Metrolist.apk"
           test -s "$apk" || { echo "Missing or empty $apk" >&2; exit 1; }
+          test -s "$windows_zip" || { echo "Missing or empty $windows_zip" >&2; exit 1; }
           test -s "$installer" || { echo "Missing or empty $installer" >&2; exit 1; }
           mkdir -p upload-assets
           cp "$apk" upload-assets/Metrolist.apk
-          cp "$installer" "upload-assets/Metrolist-Setup-${BASE_VERSION}-win-x64.exe"
+          cp "$windows_zip" upload-assets/Metrolist-Desktop-windows.zip
+          cp "$installer" "upload-assets/metrolist-installer-windows-x64-${BASE_VERSION}.exe"
+          (
+            cd upload-assets
+            sha256sum -- * > SHA256SUMS
+          )
           ls -lh upload-assets/
 
       - name: Write release notes
         shell: bash
         env:
+          BASE_VERSION: ${{ needs.version.outputs.base_version }}
           PACKAGE_VERSION: ${{ needs.version.outputs.package_version }}
         run: |
           set -euo pipefail
+          release_tag="v${BASE_VERSION}"
           {
             printf 'Fork build `%s` from [%s](https://github.com/%s/commit/%s).\n' \
               "$PACKAGE_VERSION" "${GITHUB_SHA:0:7}" "$GITHUB_REPOSITORY" "$GITHUB_SHA"
             printf '\n## Changes\n\n'
-            if previous="$(git rev-parse --verify 'refs/tags/latest^{commit}' 2>/dev/null)"; then
+            if previous="$(git rev-parse --verify "refs/tags/${release_tag}^{commit}" 2>/dev/null)"; then
               git log --first-parent --max-count=30 --format='* %s (%h)' "$previous..$GITHUB_SHA"
             else
               git log --first-parent --max-count=30 --format='* %s (%h)' "$GITHUB_SHA"
@@ -300,29 +403,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          BASE_VERSION: ${{ needs.version.outputs.base_version }}
           PACKAGE_VERSION: ${{ needs.version.outputs.package_version }}
         run: |
           set -euo pipefail
-          if git show-ref --verify --quiet refs/tags/latest; then
-            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" \
+          release_tag="v${BASE_VERSION}"
+          if git show-ref --verify --quiet "refs/tags/$release_tag"; then
+            gh api --method PATCH "repos/$GH_REPO/git/refs/tags/$release_tag" \
               -f sha="$GITHUB_SHA" -F force=true
           else
             gh api --method POST "repos/$GH_REPO/git/refs" \
-              -f ref=refs/tags/latest -f sha="$GITHUB_SHA"
+              -f "ref=refs/tags/$release_tag" -f sha="$GITHUB_SHA"
           fi
 
-          if gh release view latest --json assets --jq '.assets[].name' > "$RUNNER_TEMP/old-assets.txt" 2>/dev/null; then
-            gh release edit latest --draft --latest
+          if gh release view "$release_tag" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/old-assets.txt" 2>/dev/null; then
+            gh release edit "$release_tag" --draft --latest
             while IFS= read -r asset; do
-              [[ -n "$asset" ]] && gh release delete-asset latest "$asset" --yes
+              [[ -n "$asset" ]] && gh release delete-asset "$release_tag" "$asset" --yes
             done < "$RUNNER_TEMP/old-assets.txt"
           else
-            gh release create latest --verify-tag --target "$GITHUB_SHA" \
+            gh release create "$release_tag" --verify-tag --target "$GITHUB_SHA" \
               --title "Metrolist $PACKAGE_VERSION" --draft --latest
           fi
 
-          gh release upload latest upload-assets/* --clobber
-          gh release edit latest --target "$GITHUB_SHA" \
+          gh release upload "$release_tag" upload-assets/* --clobber
+          gh release edit "$release_tag" --target "$GITHUB_SHA" \
             --title "Metrolist $PACKAGE_VERSION" \
             --notes-file "$RUNNER_TEMP/release-notes.md" \
             --draft=false --prerelease=false --latest
