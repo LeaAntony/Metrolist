@@ -91,7 +91,6 @@ import com.metrolist.shared.discord.resolveDiscordButtonLabel
 import com.metrolist.shared.generated.resources.Res
 import com.metrolist.shared.generated.resources.playback_unable_to_play_queued_track
 import com.metrolist.shared.generated.resources.search_no_results
-import com.metrolist.shared.model.MUSIC_VIDEO_TYPE_LIVE
 import com.metrolist.shared.model.RadioQueueChip
 import com.metrolist.shared.model.SongItem
 import com.metrolist.shared.model.canSwitchToAudioTrack
@@ -137,6 +136,7 @@ import com.metrolist.shared.youtube.playback.PlaybackEventLog
 import com.metrolist.shared.youtube.playback.PlaybackNetworkStateStore
 import com.metrolist.shared.youtube.playback.PlaybackResource
 import com.metrolist.shared.youtube.playback.StreamResolver
+import com.metrolist.shared.youtube.playback.matchingLiveState
 import com.metrolist.shared.youtube.playback.playbackErrorResource
 import com.metrolist.shared.youtube.playback.toPlaybackLogDetails
 import kotlinx.coroutines.CancellationException
@@ -485,6 +485,7 @@ class MusicService :
                 withPlaybackLoading = { block -> withQueueLoading(isPlaybackLoading = true, block = block) },
                 fetchPlaybackResource = { song, wantVideo -> fetchPlaybackResource(song, wantVideo).resource },
                 onError = ::showPlaybackErrorToast,
+                isDownloaded = audioCacheManager::isDownloaded,
             )
         player.onPreloadedPlaybackCommitted = videoMode::onPreloadedPlaybackCommitted
         automotiveLibrary = AutomotiveMediaLibrary(this, database)
@@ -835,7 +836,7 @@ class MusicService :
         source: PlaybackSeekSource = PlaybackSeekSource.Other,
     ) {
         if (player.currentSong.value?.isLive == true) return
-        transitions.cancelAndroidCrossfade()
+        if (transitions.isCrossfading) transitions.cancelAndroidCrossfade()
         player.seekTo(positionMs, source)
     }
 
@@ -1708,6 +1709,7 @@ class MusicService :
                         positionMs = targetPosition,
                         wantVideo = wantVideo,
                         cachedAudio = cachedAudio,
+                        sourceIsDownloaded = cachedAudio != null && audioCacheManager.isDownloaded(sourceSong.id),
                         allowCounterpartLookup =
                             PlaybackNetworkStateStore.current.connected && !AndroidListenTogetherManager.isGuestPlaybackLocked,
                         isCounterpartAllowed = { !BlockedContent.isBlocked(it) },
@@ -1836,12 +1838,7 @@ class MusicService :
                                 ?.let(SongMetadataState::apply)
                         } ?: return@withQueueLoading false
                     val mergedSong = mergeSelectedQueueSong(playbackSong, sourceSong, currentQueueSong)
-                    playbackSong =
-                        if (resource.isLive && !mergedSong.isLive) {
-                            mergedSong.copy(musicVideoType = MUSIC_VIDEO_TYPE_LIVE, duration = null)
-                        } else {
-                            mergedSong
-                        }
+                    playbackSong = mergedSong.matchingLiveState(resource)
                     var prepareFailure: Throwable? = null
                     if (wantVideo && resource.hasVideo) {
                         videoMode.markQueueTarget(playbackSong.id)
@@ -2558,6 +2555,10 @@ class MusicService :
     }
 
     private suspend fun handlePlaybackCompletion(completedPlaybackInstanceId: Long? = null) {
+        if (completedPlaybackInstanceId != null && completedPlaybackInstanceId != player.currentPlaybackInstanceId) {
+            transitions.consumeCrossfadeCompletion(completedPlaybackInstanceId)
+            return
+        }
         flushPodcastProgress()
         savePlaybackState()
         if (sleepTimerController.isStopAfterCurrentSong) {
@@ -2921,6 +2922,18 @@ class MusicService :
             super.onDestroy()
             return
         }
+        // A failure while saving state must not leak the session, or the next service fails with a duplicate session ID.
+        try {
+            releasePlaybackState()
+        } finally {
+            mediaSession?.release()
+            MediaArtworkProvider.currentArtwork = null
+            player.release()
+            super.onDestroy()
+        }
+    }
+
+    private fun releasePlaybackState() {
         val checkpoint = saveFinalPlaybackState()
         updatePodcastProgress()
         val podcastWrite = podcastProgress.flush()
@@ -2941,10 +2954,6 @@ class MusicService :
         castManager.closeImmediately()
         serviceScope.cancel()
         contentResolver.unregisterContentObserver(volumeMuteObserver)
-        mediaSession?.release()
-        MediaArtworkProvider.currentArtwork = null
-        player.release()
-        super.onDestroy()
     }
 
     private data class PlaybackFetchResult(

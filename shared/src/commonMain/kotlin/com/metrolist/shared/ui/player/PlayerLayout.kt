@@ -20,7 +20,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -163,6 +162,7 @@ import com.metrolist.shared.ui.components.lyrics.LyricsOffsetEditor
 import com.metrolist.shared.ui.components.lyrics.LyricsView
 import com.metrolist.shared.ui.components.lyrics.rememberCaptionLyricsPositionState
 import com.metrolist.shared.ui.components.lyrics.resolveLyricsTextColor
+import com.metrolist.shared.ui.components.playbackMarquee
 import com.metrolist.shared.ui.components.playerControlBlend
 import com.metrolist.shared.ui.components.rememberTrackMarquee
 import com.metrolist.shared.ui.components.vintageOnButtonColor
@@ -321,7 +321,6 @@ internal fun TabletPlayerContent(
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 LandscapePlayerCollapseButton(
-                                    textColor = textBackgroundColor,
                                     buttonSize = topButtonSize,
                                     onClick = {
                                         hapticManager.perform(HapticEvent.PRESS)
@@ -353,7 +352,6 @@ internal fun TabletPlayerContent(
                                         LandscapePlayerModeSwitcher(
                                             isVideoActive = isVideoModeActive,
                                             isResolving = isVideoModeResolving,
-                                            textColor = textBackgroundColor,
                                             buttonHeight = topButtonSize,
                                             onSongClick = {
                                                 hapticManager.perform(HapticEvent.PRESS)
@@ -378,7 +376,6 @@ internal fun TabletPlayerContent(
                                         isCasting = castState.isConnected,
                                         isDeviceConnectActive = isDeviceConnectActive,
                                         showCastIcon = Settings.shared.castEnabled,
-                                        textColor = textBackgroundColor,
                                         buttonSize = topButtonSize,
                                         onClick = {
                                             hapticManager.perform(HapticEvent.PRESS)
@@ -720,7 +717,6 @@ private fun Modifier.landscapePlayerInsets(): Modifier = windowInsetsPadding(Win
 private fun LandscapePlayerModeSwitcher(
     isVideoActive: Boolean,
     isResolving: Boolean,
-    textColor: Color,
     buttonHeight: Dp,
     onSongClick: () -> Unit,
     onVideoClick: () -> Unit,
@@ -733,11 +729,11 @@ private fun LandscapePlayerModeSwitcher(
     val colors =
         ToggleButtonDefaults.colors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            contentColor = textColor,
+            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
             checkedContainerColor = MaterialTheme.colorScheme.primary,
             checkedContentColor = MaterialTheme.colorScheme.onPrimary,
             disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-            disabledContentColor = textColor,
+            disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
     Row(
@@ -803,7 +799,6 @@ private fun LandscapePlayerModeSwitcher(
 
 @Composable
 private fun LandscapePlayerCollapseButton(
-    textColor: Color,
     buttonSize: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -814,7 +809,7 @@ private fun LandscapePlayerCollapseButton(
         colors =
             IconButtonDefaults.filledIconButtonColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                contentColor = textColor.copy(alpha = 0.7f),
+                contentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             ),
         modifier = modifier.size(buttonSize).tvFocusHighlight(CircleShape).playerControlBlend(),
     ) {
@@ -829,7 +824,6 @@ private fun LandscapePlayerCollapseButton(
 @Composable
 private fun LandscapePlayerCastButton(
     isCasting: Boolean,
-    textColor: Color,
     buttonSize: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
@@ -852,7 +846,7 @@ private fun LandscapePlayerCastButton(
                     if (highlighted) {
                         MaterialTheme.colorScheme.onPrimary
                     } else {
-                        textColor
+                        MaterialTheme.colorScheme.onSurfaceVariant
                     },
             ),
         modifier =
@@ -1180,7 +1174,7 @@ internal fun LandscapePlayerContent(
                             color = controlsColor.copy(alpha = 0.8f),
                             maxLines = 1,
                             modifier =
-                                Modifier.basicMarquee(
+                                Modifier.playbackMarquee(
                                     iterations = if (LocalPlayerContentActive.current) 1 else 0,
                                     initialDelayMillis = 3000,
                                     velocity = 30.dp,
@@ -1223,7 +1217,6 @@ internal fun LandscapePlayerContent(
                     LandscapePlayerModeSwitcher(
                         isVideoActive = isVideoModeActive,
                         isResolving = isVideoModeResolving,
-                        textColor = controlsColor,
                         buttonHeight = topButtonSize,
                         onSongClick = {
                             hapticManager.perform(HapticEvent.PRESS)
@@ -1249,7 +1242,6 @@ internal fun LandscapePlayerContent(
                 isCasting = castState.isConnected,
                 isDeviceConnectActive = isDeviceConnectActive,
                 showCastIcon = Settings.shared.castEnabled,
-                textColor = controlsColor,
                 buttonSize = topButtonSize,
                 onClick = {
                     hapticManager.perform(HapticEvent.PRESS)

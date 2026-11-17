@@ -108,6 +108,7 @@ import com.metrolist.shared.constants.LibraryManualOrderKey
 import com.metrolist.shared.constants.LibraryPinchColumnsKey
 import com.metrolist.shared.constants.LibrarySortDirectionKey
 import com.metrolist.shared.constants.LibrarySortingByFilterKey
+import com.metrolist.shared.constants.LibraryViewsByFilterKey
 import com.metrolist.shared.constants.LikedSongSortDirectionKey
 import com.metrolist.shared.constants.LikedSongSortKey
 import com.metrolist.shared.constants.LikedSongsCustomOrdersJsonKey
@@ -141,6 +142,7 @@ import com.metrolist.shared.constants.PlaybackSpeedKey
 import com.metrolist.shared.constants.PlayerConfigRemoteEtagKey
 import com.metrolist.shared.constants.PlayerConfigRemoteSourceUrlKey
 import com.metrolist.shared.constants.PlaylistCollectionSortingsKey
+import com.metrolist.shared.constants.PlaylistEditLockKey
 import com.metrolist.shared.constants.PlaylistPickerSortDirectionKey
 import com.metrolist.shared.constants.PlaylistPickerSortKey
 import com.metrolist.shared.constants.PlaylistSongSortingsKey
@@ -521,7 +523,6 @@ class Settings(
     var lyricsAiBaseUrl by preference("https://openrouter.ai/api/v1/chat/completions")
     var lyricsAiModel by preference(AiProviderPresets.DEFAULT_LYRICS_AI_MODEL)
 
-    var lyricsAiDetectorModel by preference("")
     var lyricsAiTargetLanguage by preference("device")
     var lyricsAiTranslationMode by preference("Literal")
     var lyricsAiActivationMode by preference("Automatic")
@@ -574,6 +575,7 @@ class Settings(
     var downloadLocation by preference("INTERNAL")
     var customDownloadPath by preference("")
     var autoDownloadOnLike by preference(false)
+    var autoDownloadSavedCollections by preference(false)
     var keepDownloadedPlaylistsJson by preference(KeepDownloadedPlaylistsJsonKey, "")
     var desktopStoppedDownloadIdsJson by preference(DesktopStoppedDownloadIdsJsonKey, "")
     var androidLastStorageAudit by preference(AndroidLastStorageAuditKey, 0L)
@@ -582,6 +584,8 @@ class Settings(
 
     var checkForUpdates by preference(true)
     var updateNotifications by preference(true)
+    var updateChannel by preference("")
+    var installedNightlyDigest by preference("")
     var lastUpdateCheckTimestamp by preference(0L)
     var lastUpdateCheckAttemptTimestamp by preference(0L)
     var lastRunAppVersion by preference("")
@@ -726,6 +730,7 @@ class Settings(
     var libraryManualOrder by preference(LibraryManualOrderKey, "")
     var playlistPickerSort by preference(PlaylistPickerSortKey, PlaylistPickerSort.LIBRARY)
     var playlistPickerSortDirection by preference(PlaylistPickerSortDirectionKey, SortDirection.ASCENDING)
+    var playlistEditLock by preference(PlaylistEditLockKey, true)
     var playlistSongSort by preference(PlaylistSongSort.ORIGINAL)
     var playlistSongSortDirection by preference(SortDirection.ASCENDING)
     var likedSongSort by preference(LikedSongSortKey, PlaylistSongSort.DATE_ADDED)
@@ -772,6 +777,25 @@ class Settings(
     var pendingRemoteLibraryRemovalKeysJson by preference(PendingRemoteLibraryRemovalKeysJsonKey, "[]")
     var deletedPlaylistIdsJson by preference(DeletedPlaylistIdsJsonKey, "[]")
     var libraryGridView by preference(true)
+    private var libraryViewsByFilterJson by preference(LibraryViewsByFilterKey, "{}")
+
+    fun libraryGridView(
+        filter: LibraryFilterType,
+        defaultValue: Boolean = libraryGridView,
+    ): Boolean =
+        libraryViewsByFilter()[(filter.takeUnless { it == LibraryFilterType.DEFAULT } ?: LibraryFilterType.ALL).name] ?: defaultValue
+
+    fun setLibraryGridView(
+        filter: LibraryFilterType,
+        grid: Boolean,
+    ) {
+        val key = filter.takeUnless { it == LibraryFilterType.DEFAULT } ?: LibraryFilterType.ALL
+        libraryViewsByFilterJson = Json.encodeToString(libraryViewsByFilter() + (key.name to grid))
+    }
+
+    private fun libraryViewsByFilter(): Map<String, Boolean> =
+        runCatching { Json.decodeFromString<Map<String, Boolean>>(libraryViewsByFilterJson) }.getOrDefault(emptyMap())
+
     var gridItemSize by preference(GridItemSizeKey, GridItemSize.BIG)
     private var storedLibraryGridColumns by preference(LibraryGridColumnsKey, 3)
     var libraryGridColumns: Int
@@ -1326,6 +1350,7 @@ class Settings(
                     "cachedAvailableUpdateJson",
                     "cachedUpdateReleasesJson",
                     "pendingUpdateReleaseJson",
+                    "installedNightlyDigest",
                     "lastUpdateCheckTime",
                     DevtoolsUnlockedKey,
                     DevtoolsPlaybackClientKey,
