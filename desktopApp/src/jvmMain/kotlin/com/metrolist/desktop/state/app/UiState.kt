@@ -75,6 +75,19 @@ object UiState {
         }
     var showDeviceConnectPanel by mutableStateOf(false)
     var isDeviceConnectPanelModal by mutableStateOf(false)
+    var showNarrowNowPlayingOverlay by mutableStateOf(false)
+    var isNowPlayingOverlayLayout by mutableStateOf(false)
+    val isNowPlayingDrawerVisible: Boolean
+        get() =
+            resolveDesktopNowPlayingVisibility(
+                hasTrack = PlayerState.currentTrack != null,
+                isOverlayLayout = isNowPlayingOverlayLayout,
+                showDockedPreference = Settings.shared.showDesktopNowPlayingPanel,
+                showNarrowOverlay = showNarrowNowPlayingOverlay,
+                showQueue = showPersistentPlayerDrawer,
+                showLyrics = showLyricsDrawer,
+                showDeviceConnect = showDeviceConnectPanel,
+            )
     var showVideoViewer by mutableStateOf(false)
     internal val playerPresentation = PlayerPresentationState()
     var showVideoFullscreen: Boolean
@@ -120,11 +133,90 @@ object UiState {
             PlayerState.exitExpanded()
             showPersistentPlayerDrawer = false
             showLyricsDrawer = false
+            showNarrowNowPlayingOverlay = false
         }
     }
 
     fun togglePersistentPlayerDrawer() {
         showPersistentPlayerDrawer = !showPersistentPlayerDrawer
-        if (showPersistentPlayerDrawer) showDeviceConnectPanel = false
+        if (showPersistentPlayerDrawer) {
+            showDeviceConnectPanel = false
+            showNarrowNowPlayingOverlay = false
+        }
     }
+
+    fun toggleNowPlayingDrawer() {
+        val next =
+            toggleDesktopNowPlayingState(
+                isOverlayLayout = isNowPlayingOverlayLayout,
+                showDockedPreference = Settings.shared.showDesktopNowPlayingPanel,
+                showNarrowOverlay = showNarrowNowPlayingOverlay,
+                showQueue = showPersistentPlayerDrawer,
+                showLyrics = showLyricsDrawer,
+                showDeviceConnect = showDeviceConnectPanel,
+            )
+        Settings.shared.showDesktopNowPlayingPanel = next.showDockedPreference
+        showNarrowNowPlayingOverlay = next.showNarrowOverlay
+        showPersistentPlayerDrawer = next.showQueue
+        showLyricsDrawer = next.showLyrics
+        showDeviceConnectPanel = next.showDeviceConnect
+    }
+
+    fun closeNowPlayingDrawer() {
+        if (isNowPlayingOverlayLayout) {
+            showNarrowNowPlayingOverlay = false
+        } else {
+            Settings.shared.showDesktopNowPlayingPanel = false
+        }
+    }
+}
+
+internal data class DesktopNowPlayingToggleResult(
+    val showDockedPreference: Boolean,
+    val showNarrowOverlay: Boolean,
+    val showQueue: Boolean,
+    val showLyrics: Boolean,
+    val showDeviceConnect: Boolean,
+)
+
+internal fun resolveDesktopNowPlayingVisibility(
+    hasTrack: Boolean,
+    isOverlayLayout: Boolean,
+    showDockedPreference: Boolean,
+    showNarrowOverlay: Boolean,
+    showQueue: Boolean,
+    showLyrics: Boolean,
+    showDeviceConnect: Boolean,
+): Boolean {
+    if (!hasTrack) return false
+    if (showQueue || showLyrics || showDeviceConnect) return false
+    return if (isOverlayLayout) showNarrowOverlay else showDockedPreference
+}
+
+internal fun toggleDesktopNowPlayingState(
+    isOverlayLayout: Boolean,
+    showDockedPreference: Boolean,
+    showNarrowOverlay: Boolean,
+    showQueue: Boolean,
+    showLyrics: Boolean,
+    showDeviceConnect: Boolean,
+): DesktopNowPlayingToggleResult {
+    val blockedByOtherPanel = showQueue || showLyrics || showDeviceConnect
+    if (isOverlayLayout) {
+        val opening = !showNarrowOverlay || blockedByOtherPanel
+        return DesktopNowPlayingToggleResult(
+            showDockedPreference = showDockedPreference,
+            showNarrowOverlay = opening,
+            showQueue = if (opening) false else showQueue,
+            showLyrics = if (opening) false else showLyrics,
+            showDeviceConnect = if (opening) false else showDeviceConnect,
+        )
+    }
+    return DesktopNowPlayingToggleResult(
+        showDockedPreference = if (blockedByOtherPanel) true else !showDockedPreference,
+        showNarrowOverlay = false,
+        showQueue = false,
+        showLyrics = false,
+        showDeviceConnect = false,
+    )
 }

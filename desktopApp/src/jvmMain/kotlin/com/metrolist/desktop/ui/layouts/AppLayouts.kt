@@ -80,11 +80,13 @@ import com.metrolist.desktop.state.playback.PlayerState
 import com.metrolist.desktop.ui.components.AddToPlaylistDialog
 import com.metrolist.desktop.ui.components.CustomTitleBar
 import com.metrolist.desktop.ui.components.DesktopLyricsContent
+import com.metrolist.desktop.ui.components.DesktopNowPlayingContent
 import com.metrolist.desktop.ui.components.DesktopPlayerVisibility
 import com.metrolist.desktop.ui.components.DesktopQueueContent
 import com.metrolist.desktop.ui.components.DeviceConnectModalSideSheet
 import com.metrolist.desktop.ui.components.DeviceConnectSideSheet
 import com.metrolist.desktop.ui.components.LyricsDrawer
+import com.metrolist.desktop.ui.components.NowPlayingDrawer
 import com.metrolist.desktop.ui.components.PersistentPlayerDrawer
 import com.metrolist.desktop.ui.components.StandardBottomPlayer
 import com.metrolist.desktop.ui.components.TopBarWithPlayer
@@ -513,14 +515,18 @@ private fun ColumnScope.MainLayoutContent(
                 UiState.playerPanels.canShowBoth = availableSupportingWidth >= 560.dp
             }
             UiState.isDeviceConnectPanelModal = deviceConnectOverlaysContent
+            UiState.isNowPlayingOverlayLayout = playerDrawersOverlayContent
         }
 
         val isQueueOpen = UiState.showPersistentPlayerDrawer && PlayerState.currentTrack != null
         val isLyricsOpen = UiState.showLyricsDrawer && PlayerState.currentTrack != null
+        val isNowPlayingDocked = !playerDrawersOverlayContent && UiState.isNowPlayingDrawerVisible
         val density = LocalDensity.current
 
         var queuePaneWidth by remember { mutableStateOf(360.dp) }
         var lyricsPaneWidth by remember { mutableStateOf(360.dp) }
+        var nowPlayingPaneWidth by remember { mutableStateOf(320.dp) }
+        val maxNowPlayingWidth = availableSupportingWidth.coerceAtLeast(280.dp)
 
         val maxQueueWidth =
             if (isQueueOpen && isLyricsOpen) {
@@ -635,6 +641,49 @@ private fun ColumnScope.MainLayoutContent(
                             )
                         }
                     }
+
+                    AnimatedVisibility(
+                        visible = isNowPlayingDocked,
+                        enter =
+                            expandHorizontally(
+                                expandFrom = Alignment.End,
+                                animationSpec =
+                                    spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMediumLow,
+                                    ),
+                            ) + fadeIn(animationSpec = tween(200)),
+                        exit =
+                            shrinkHorizontally(
+                                shrinkTowards = Alignment.End,
+                                animationSpec =
+                                    spring(
+                                        dampingRatio = Spring.DampingRatioNoBouncy,
+                                        stiffness = Spring.StiffnessMedium,
+                                    ),
+                            ) + fadeOut(animationSpec = tween(150)),
+                    ) {
+                        Row(modifier = Modifier.fillMaxHeight()) {
+                            PaneResizeHandle(
+                                onDrag = { deltaPx ->
+                                    val deltaDp = with(density) { -deltaPx.toDp() }
+                                    nowPlayingPaneWidth =
+                                        (nowPlayingPaneWidth + deltaDp).coerceIn(280.dp, maxNowPlayingWidth.coerceAtMost(440.dp))
+                                },
+                                onReset = { nowPlayingPaneWidth = 320.dp },
+                            )
+                            DesktopNowPlayingContent(
+                                onClose = UiState::closeNowPlayingDrawer,
+                                colorScheme = colorScheme,
+                                modifier =
+                                    Modifier
+                                        .width(
+                                            nowPlayingPaneWidth.coerceIn(280.dp, maxNowPlayingWidth.coerceAtMost(440.dp)),
+                                        ).fillMaxHeight(),
+                                isVisible = !PlayerState.isExpanded && !UiState.videoFullscreenObscuresPlayer,
+                            )
+                        }
+                    }
                 }
 
                 if (!deviceConnectOverlaysContent) {
@@ -646,6 +695,7 @@ private fun ColumnScope.MainLayoutContent(
                 Row(Modifier.align(Alignment.CenterEnd).fillMaxHeight()) {
                     PersistentPlayerDrawer(colorScheme = colorScheme, availableWidth = overlayWidth)
                     LyricsDrawer(colorScheme = colorScheme, availableWidth = overlayWidth)
+                    NowPlayingDrawer(colorScheme = colorScheme, availableWidth = overlayWidth)
                 }
             }
 

@@ -1,5 +1,57 @@
 package com.metrolist.shared.ui.components
 
+internal enum class ControlActionRole {
+    STANDARD,
+    VOLUME,
+    DEVICE_CONNECT,
+}
+
+internal data class ControlActionEntry<out T>(
+    val action: T,
+    val role: ControlActionRole,
+)
+
+internal fun <T> buildPlayerControlGroups(
+    leftActions: List<T>,
+    volumeAction: T,
+    deviceConnectAction: T?,
+    rightActions: List<T>,
+    sectioned: Boolean,
+): List<List<ControlActionEntry<T>>> {
+    val leftEntries = leftActions.map { ControlActionEntry(it, ControlActionRole.STANDARD) }
+    val volumeEntry = ControlActionEntry(volumeAction, ControlActionRole.VOLUME)
+    val rightEntries =
+        buildList<ControlActionEntry<T>> {
+            if (deviceConnectAction != null) {
+                add(ControlActionEntry(deviceConnectAction, ControlActionRole.DEVICE_CONNECT))
+            }
+            rightActions.forEach { add(ControlActionEntry(it, ControlActionRole.STANDARD)) }
+        }
+    return if (sectioned) {
+        listOf(leftEntries, listOf(volumeEntry) + rightEntries)
+    } else {
+        listOf(leftEntries + volumeEntry + rightEntries)
+    }
+}
+
+internal fun <T> resolveDisplayedControlEntries(
+    rawEntries: List<ControlActionEntry<T>>,
+    rawLastVisibleIndex: Int,
+    prioritizeDeviceConnect: Boolean,
+    sectioned: Boolean,
+): List<ControlActionEntry<T>> {
+    if (!prioritizeDeviceConnect || sectioned) return rawEntries
+    val volumeIndex = rawEntries.indexOfFirst { it.role == ControlActionRole.VOLUME }
+    val deviceConnectIndex = rawEntries.indexOfFirst { it.role == ControlActionRole.DEVICE_CONNECT }
+    if (volumeIndex < 0 || deviceConnectIndex < 0) return rawEntries
+    return promoteAdjacentControlActions(
+        actions = rawEntries,
+        lastVisibleIndex = rawLastVisibleIndex,
+        primaryIndex = volumeIndex,
+        secondaryIndex = deviceConnectIndex,
+    )
+}
+
 internal fun playerControlLastVisibleIndex(
     availableWidth: Float,
     itemCount: Int,
