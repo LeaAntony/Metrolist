@@ -9,7 +9,6 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -93,6 +92,7 @@ import com.metrolist.shared.ui.components.PlayerPrimaryControls
 import com.metrolist.shared.ui.components.PopupVisibility
 import com.metrolist.shared.ui.components.VintagePlayerControls
 import com.metrolist.shared.ui.components.VintagePlayerControlsText
+import com.metrolist.shared.ui.components.playbackMarquee
 import com.metrolist.shared.ui.icons.MetrolistIcons
 import com.metrolist.shared.ui.menu.cursorContextMenu
 import com.metrolist.shared.ui.menu.rememberCursorContextMenuState
@@ -233,7 +233,7 @@ fun PlayerCoreContent(
                                         PlayerState.exitExpanded()
                                         PlaylistAlbumState.openSongAlbum(song)
                                     }
-                                }.basicMarquee(
+                                }.playbackMarquee(
                                     iterations = if (UiState.videoFullscreenObscuresPlayer) 0 else 1,
                                     initialDelayMillis = 2000,
                                     velocity = 30.dp,

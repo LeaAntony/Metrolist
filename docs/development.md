@@ -265,6 +265,8 @@ All add-to-playlist pickers share a sort preference independent of library sorti
 
 Playlist membership lookups and complete playlist loads share an account-bound five-minute cache. Acknowledged adds update it without extending expiry; removals, copies and failed edits invalidate it. Offline or incomplete results cannot establish that a song is absent. Local additions commit at most 100 songs at a time and report each committed prefix. Appends use the highest stored position, so gaps are valid.
 
+Complete saved remote playlists, including empty playlists and OLAK album playlists, open from Room on Android, desktop and iOS. Use **Sync playlist** in the playlist menu to fetch a new snapshot. Incomplete playlists finish loading and caching their pages. Editable snapshots also need server occurrence IDs before reuse. Desktop picker additions update cached membership even outside the current page, including acknowledged songs in a partial batch. The next read reconciles server occurrence IDs before removal or reorder. Dynamic YouTube mixes still refresh on open. Offline opening keeps the downloaded-song filter; recovery from a failed batch reorder can force a refresh.
+
 Song editor Save and Reset keep the editor open until persistence succeeds and disable dismissal while saving. Reset clears title and artist overrides, restores stored original metadata offline and preserves artist links.
 
 Artist Top tracks shows the first five songs of the songs shelf; the header arrow opens the full list. The library shelf uses a Material 3 gallery carousel. Videos use a carousel of masked 16:9 cards, shared by Home, browse and search shelves when every item is a video. Classification uses item metadata plus the artist page's section hints. Artist carousels apply each artist outline to the changing carousel mask rather than intersecting it with a fixed outline.
@@ -315,7 +317,7 @@ Shared MLX parsing rejects Han text in Lyprio/KUGOU romanization fields, because
 
 LyricsPlus and Zemer are not lookup providers. Stored provider settings drop them, and saved lyrics from either remain readable.
 
-Each candidate includes cached translations and dictionary-free romanization before display. When Japanese dictionary preparation is needed and nothing is displayed, plain lyrics publish first. Enrichment replaces only the displayed entries and keeps source timestamps. Cancelled requests and late enrichment cannot overwrite newer results. Songwriter lookups run independently.
+Each candidate includes cached translations and dictionary-free romanization before display. When romanization dictionary preparation is needed and nothing is displayed, plain lyrics publish first. Enrichment replaces only the displayed entries and keeps source timestamps. Cancelled requests and late enrichment cannot overwrite newer results. Songwriter lookups run independently.
 
 The shared player keeps empty results loading until the request releases its deduplication key. Refetch bypasses the saved result; empty or failed refreshes keep the displayed lyrics. Player captions request lyrics when enabled, but hidden mobile players do not. Next-song prefetch requires full lyrics or subtitles.
 
@@ -347,9 +349,9 @@ The lyrics settings preview uses the current song's lyrics only during active pl
 
 ### AI translation
 
-Automatic translation checks each main and background vocal for a meaningful passage outside the target language, including phrases inside mixed-language lines. The detector returns a source passage, not a dominant-language flag; invalid passages fail detection without caching a negative decision. Only vocals with a foreign passage are translated, and results appear beneath them. Detection batches up to 40 unique vocals. The song-level detector for romanization and connection checks reads lyrics in batches of at most 8,000 characters and stops at the first foreign passage; a negative decision needs every batch to succeed. The translation cache covers both vocal sources. Completed translations survive activation-mode and detector-policy changes when the sources, target, translation mode and provider configuration match. Negative decisions still require the same detection policy and never block a forced request.
+Automatic translation uses glyphmind's bundled language detector for each main and background vocal. It checks whole lines, script runs and overlapping three-word passages. Confident foreign passages trigger translation through the selected provider; unknown lines remain unchanged unless translation is forced. There are no detection HTTP requests or detector model setting. Short phrases and names can be missed or misclassified. See [romanization and detection](romanization.md) for the model, downloads and behavior changes. Completed translations survive detector-policy changes when source, target, translation mode and provider configuration match. Negative decisions require the same detection policy and never block a forced request.
 
-Detection and translation retry once after a failure, except for cancellation, missing credentials, HTTP 401/403 and 429. A final failure keeps the original lyrics and shows a short snackbar naming the cause. HTTP 200 alone does not prove a usable translation. Playback exports record the stage, provider, model, failure category, output lengths, finish reason and reasoning presence, but never lyrics, response bodies or credentials. Gemini thought parts are excluded. Manual translation enriches displayed lyrics without refetching and keeps the source, offset and video retiming.
+Translation retries once after a failure, except for cancellation, missing credentials, HTTP 401/403 and 429. A final failure keeps the original lyrics and shows a short snackbar naming the cause. HTTP 200 alone does not prove a usable translation. Playback exports record the stage, provider, model, failure category, output lengths, finish reason and reasoning presence, but never lyrics, response bodies or credentials. Gemini thought parts are excluded. Manual translation enriches displayed lyrics without refetching and keeps the source, offset and video retiming.
 
 Gemini requests go to `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent` by default. A saved endpoint with the old `{model}` placeholder is upgraded to that URL. When an endpoint names a model, a model selected in settings replaces it; an endpoint with `{model}` takes the selected model, or the default when none is selected.
 
@@ -369,6 +371,8 @@ iOS lyrics support long-press selection and the shared image editor. Images are 
 
 The database uses [Room 3](https://developer.android.com/jetpack/androidx/releases/room3) with the Android system SQLite driver, the desktop JDBC driver and the iOS bundled driver. All platforms share the migration chain. Schema 62 and the historical Room 2 exports keep their identities, and migration tests build fixtures from those exports on every platform. Do not replace old exports. Keep migrations compatible with existing installs. Schema 59 uses numeric boolean defaults for Android SQLite before 3.23.
 
+Schema 67 stores complete remote playlist headers, including creator names, channel links, avatars, views and runtime. Older snapshots fetch once to fill the missing header before reuse. Android finishes this refresh without scrolling when all songs were already stored, and keeps the old snapshot if a page fails. Cached Android playlists use every stored song when computing total runtime.
+
 Pending scrobbles are rows in `pending_scrobble`. The first queue operation migrates valid entries from `pendingScrobblesJson` and clears it only after the insert succeeds; malformed entries move to `corruptPendingScrobblesJson`. Acknowledging a submission deletes only its row.
 
 Preserve duplicate queue occurrences and revision-bound checkpoints. Commit the full queue before its position checkpoint so interrupted writes cannot combine different queues. Desktop checkpoints map video positions back to the queued audio timeline. Queue Undo belongs to the queue session that produced it; replacement queues and persisted restores invalidate it.
@@ -387,7 +391,7 @@ Legacy database conversion removes dangling children covered by cascading foreig
 
 ### Casting
 
-Android and desktop share the JVM cast sessions. Connecting and replacing media preserve receiver volume for Google Cast, DLNA/Sonos and FCast; only explicit adjustments send volume commands. Receiver reports supply remote volume state.
+Android and desktop share the JVM cast sessions. Connecting and replacing media preserve receiver volume for Google Cast, DLNA/Sonos and FCast; only explicit adjustments send volume commands. Receiver reports supply remote volume state. Song changes replace media in the existing session. The stream proxy keeps TCP port `57643` and changes its URL token for each song. See the [Linux firewall setup](install/linux.md#sonos-and-dlna-with-firewalld) for SSDP reply and stream rules.
 
 ### Discord
 
